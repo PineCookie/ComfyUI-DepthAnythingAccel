@@ -1,6 +1,6 @@
 [project]
 name = "depthanythingaccel"
-version = "1.0.1"
+version = "1.0.2"
 description = "Depth Anything V2 / Distill-Any-Depth depth estimation at native resolution, accelerated with ONNX Runtime and TensorRT — one chainable node set"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -8,7 +8,6 @@ license = { file = "LICENSE" }
 dependencies = ["safetensors>=0.4"]
 classifiers = [
     "Operating System :: OS Independent",
-    "Environment :: GPU :: NVIDIA CUDA",
 ]
 
 [project.optional-dependencies]
