@@ -1,7 +1,7 @@
 [project]
 name = "depthanythingaccel"
-version = "1.0.0"
-description = "Native-resolution Depth Anything V2 and Distill-Any-Depth inference for ComfyUI"
+version = "1.0.1"
+description = "Depth Anything V2 / Distill-Any-Depth depth estimation at native resolution, accelerated with ONNX Runtime and TensorRT — one chainable node set"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
@@ -23,4 +23,4 @@ Documentation = "https://github.com/PineCookie/ComfyUI-DepthAnythingAccel#readme
 
 [tool.comfy]
 PublisherId = "pinecookie"
-DisplayName = "DepthAnythingAccel"
+DisplayName = "Depth Anything V2 / DAD — DepthAccel"
