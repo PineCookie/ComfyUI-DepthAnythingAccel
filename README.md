@@ -106,6 +106,8 @@ fused handle when you do not plan to build a TensorRT engine:
 
 > A TensorRT engine must be built from the explicit (non-fused) ONNX graph; its
 > `Max H` / `Max W` profile bounds the largest input resolution it accepts.
+> Engines are tied to the TensorRT version and GPU they were built on — rebuild
+> after upgrading TensorRT or changing GPUs (the loader reports a mismatch).
 
 ## Nodes
 

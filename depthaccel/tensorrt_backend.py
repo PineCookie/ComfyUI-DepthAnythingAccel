@@ -26,6 +26,31 @@ class TensorrtDepthModel:
     _context: object = field(default=None, repr=False)
 
 
+def _engine_version_path(engine_path: Path) -> Path:
+    """Sidecar file recording the TensorRT version that built an engine."""
+    return Path(str(engine_path) + ".version")
+
+
+def check_engine_version(engine_path: Path, current_version: str) -> None:
+    """Raise if an engine was built with a different TensorRT version.
+
+    Serialized engines are tied to the TensorRT version that built them; a
+    silent mismatch would otherwise surface as confusing deserialize failures.
+    Engines without a sidecar (built by other tools) are skipped.
+    """
+    sidecar = _engine_version_path(engine_path)
+    if not sidecar.is_file():
+        return
+    built = sidecar.read_text(encoding="utf-8").strip()
+    if built and built != current_version:
+        raise RuntimeError(
+            f"TensorRT engine {engine_path.name} was built with TensorRT "
+            f"{built}, but the installed runtime is {current_version}. Engines "
+            "are version-specific; rebuild it with tools/export_tensorrt.py or "
+            "the Build TensorRT Engine node."
+        )
+
+
 def load_tensorrt_model(
     model_path: str | Path,
     device: str = "cuda",
@@ -53,6 +78,7 @@ def load_tensorrt_model(
         engine = runtime.deserialize_cuda_engine(source.read())
     if engine is None:
         raise RuntimeError(f"Failed to deserialize TensorRT engine: {path}")
+    check_engine_version(path, getattr(trt, "__version__", "unknown"))
     if engine.num_io_tensors != 2:
         raise ValueError(
             "Expected one TensorRT input and one output, "

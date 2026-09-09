@@ -105,6 +105,9 @@ def build_engine(
 
     engine_path.parent.mkdir(parents=True, exist_ok=True)
     engine_path.write_bytes(bytes(serialized))
+    # Record the building TensorRT version so the loader can refuse a silent
+    # engine/runtime version mismatch (see depthaccel/tensorrt_backend.py).
+    Path(str(engine_path) + ".version").write_text(trt.__version__, encoding="utf-8")
 
     if timing_cache is not None:
         timing_cache.parent.mkdir(parents=True, exist_ok=True)

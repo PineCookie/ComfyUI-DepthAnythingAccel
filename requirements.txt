@@ -10,3 +10,6 @@ onnxruntime-gpu
 # onnx
 # onnxslim
 # tensorrt
+#   TensorRT engines are tied to the exact TensorRT version (and GPU) that
+#   built them. Use the same version to build and run engines; after upgrading
+#   TensorRT, rebuild your engines.
