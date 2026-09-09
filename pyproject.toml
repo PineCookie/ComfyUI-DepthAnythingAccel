@@ -1,6 +1,6 @@
 [project]
 name = "depthanythingaccel"
-version = "1.0.2"
+version = "1.0.3"
 description = "Depth Anything V2 / Distill-Any-Depth depth estimation at native resolution, accelerated with ONNX Runtime and TensorRT — one chainable node set"
 readme = "README.md"
 requires-python = ">=3.10"
