@@ -1,0 +1,18 @@
+# Files excluded from the published Comfy Registry archive.
+# tools/ is intentionally kept: the in-ComfyUI conversion nodes import it.
+
+devtools/
+tests/
+DEVELOPMENT.md
+
+# Local-only assets and notes (kept on disk, never published)
+artifacts/
+*.pth
+*.safetensors
+*.onnx
+*.trt
+*.engine
+*.plan
+__pycache__/
+*.py[cod]
+.vscode/

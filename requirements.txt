@@ -1,0 +1,12 @@
+# Python dependencies installed by ComfyUI-Manager: pip install -r requirements.txt
+# Keep versions loose to avoid conflicts with other custom nodes.
+# https://docs.comfy.org/custom-nodes/backend/manager
+
+safetensors
+huggingface-hub
+onnxruntime-gpu
+
+# Optional (uncomment per use):
+# onnx
+# onnxslim
+# tensorrt

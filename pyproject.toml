@@ -1,0 +1,26 @@
+[project]
+name = "depthanythingaccel"
+version = "1.0.0"
+description = "Native-resolution Depth Anything V2 and Distill-Any-Depth inference for ComfyUI"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+dependencies = ["safetensors>=0.4"]
+classifiers = [
+    "Operating System :: OS Independent",
+    "Environment :: GPU :: NVIDIA CUDA",
+]
+
+[project.optional-dependencies]
+export = ["onnx>=1.17", "onnxslim>=0.1"]
+runtime = ["onnxruntime-gpu>=1.18"]
+tensorrt = ["tensorrt"]
+
+[project.urls]
+Repository = "https://github.com/PineCookie/ComfyUI-DepthAnythingAccel"
+Documentation = "https://github.com/PineCookie/ComfyUI-DepthAnythingAccel#readme"
+"Issue Tracker" = "https://github.com/PineCookie/ComfyUI-DepthAnythingAccel/issues"
+
+[tool.comfy]
+PublisherId = "pinecookie"
+DisplayName = "DepthAnythingAccel"

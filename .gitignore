@@ -1,0 +1,36 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local Python environments and packaging output
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+
+# Local editor and OS metadata
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Generated models, engines, and benchmark artifacts
+artifacts/
+*.onnx
+*.onnx.data
+*.engine
+*.plan
+*.trt
+*.pth
+*.pt
+*.safetensors
+
+# Local development notes and generated validation reports
+*.md
+!README.md
+!README_zh.md
+!THIRD_PARTY.md
+!DEVELOPMENT.md
