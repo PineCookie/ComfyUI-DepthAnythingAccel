@@ -34,7 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--min-hw", type=int, nargs=2, default=(14, 14), metavar=("H", "W"))
     parser.add_argument("--opt-hw", type=int, nargs=2, default=(1022, 1022), metavar=("H", "W"))
-    parser.add_argument("--max-hw", type=int, nargs=2, default=(2016, 2016), metavar=("H", "W"))
+    parser.add_argument("--max-hw", type=int, nargs=2, default=(2688, 2688), metavar=("H", "W"))
     parser.add_argument("--workspace-gb", type=int, default=4)
     parser.add_argument("--timing-cache", type=Path, help="Persistent timing cache file to speed up repeated builds.")
     parser.add_argument("--verbose", action="store_true")

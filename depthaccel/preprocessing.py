@@ -16,15 +16,12 @@ IMAGE_MEAN = (0.485, 0.456, 0.406)
 IMAGE_STD = (0.229, 0.224, 0.225)
 
 # Conservative native-resolution budgets in aligned pixels, derived from the
-# P0 native-2K OOM finding on a 16 GB GPU: FP32 vitl OOMs near 3.5 MP while the
-# FP16 paths comfortably cover the dynamic profile up to 2016x2016. The FP32
-# budget keeps headroom below that boundary while still allowing typical
-# 1536x1536 (~2.36 MP) canvases. Backends that exceed their budget fail fast
-# with an actionable error instead of exhausting VRAM
-# (see guard_inference_resolution).
+# P0 native-2K OOM finding on a 16 GB GPU (FP32 vitl OOMs near 3.5 MP). These
+# guard the PyTorch/ONNX backends; a TensorRT engine is bounded by its own
+# profile instead. Over-budget inputs fail fast (see guard_inference_resolution).
 MAX_RESOLUTION_PIXELS = {
     "fp32": 2_621_440,  # ~2.6 MP, covers 1536x1536 canvases
-    "fp16": 4_718_592,  # above the 2016x2016 (4.06 MP) dynamic profile
+    "fp16": 4_718_592,  # ~4.7 MP
     "bf16": 4_718_592,
 }
 

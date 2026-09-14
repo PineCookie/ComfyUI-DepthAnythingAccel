@@ -571,8 +571,8 @@ class DepthAccelBuildTensorrtEngine(io.ComfyNode):
                 io.Int.Input("min_w", display_name="Min W", default=14, min=14, step=14),
                 io.Int.Input("opt_h", display_name="Opt H", default=1022, min=14, step=14),
                 io.Int.Input("opt_w", display_name="Opt W", default=1022, min=14, step=14),
-                io.Int.Input("max_h", display_name="Max H", default=2016, min=14, step=14),
-                io.Int.Input("max_w", display_name="Max W", default=2016, min=14, step=14),
+                io.Int.Input("max_h", display_name="Max H", default=2688, min=14, step=14),
+                io.Int.Input("max_w", display_name="Max W", default=2688, min=14, step=14),
                 io.Int.Input(
                     "workspace_gb",
                     display_name="Workspace GB",
