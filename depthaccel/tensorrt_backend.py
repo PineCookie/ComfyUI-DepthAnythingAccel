@@ -7,7 +7,6 @@ import torch
 
 from .paths import resolve_model_file
 from .preprocessing import PATCH_SIZE, prepare_image, restore_depth
-from .trt_logger import get_trt_logger
 
 
 @dataclass
@@ -62,6 +61,7 @@ def load_tensorrt_model(
         raise RuntimeError(
             "TensorRT is not installed. Install tensorrt to load TensorRT engines."
         ) from error
+    from .trt_logger import get_trt_logger
 
     target = torch.device(device)
     if target.type != "cuda":
