@@ -93,7 +93,7 @@ yourself is detected and loaded.
         [Load Depth Model (PyTorch)]
 ```
 
-Nodes are in the `DepthAnythingAccel` category. Pick a model file and
+Nodes are in the `Depth Anything Accel` category. Pick a model file and
 (optionally) a precision; the encoder and DA2/DAD family are detected from the
 checkpoint.
 

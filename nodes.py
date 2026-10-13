@@ -184,7 +184,7 @@ class DepthAccelLoadReferenceModel(io.ComfyNode):
         return io.Schema(
             node_id="DepthAccelLoadReferenceModel",
             display_name="Load Depth Model (PyTorch)",
-            category="DepthAnythingAccel/Reference",
+            category="Depth Anything Accel/PyTorch",
             description=(
                 "Loads a DA2 or architecture-compatible DAD checkpoint from "
                 "ComfyUI/models/depthanything into DepthAccel's runtime. The "
@@ -246,7 +246,7 @@ class DepthAccelEstimateDepth(io.ComfyNode):
         return io.Schema(
             node_id="DepthAccelEstimateDepth",
             display_name="Estimate Depth (PyTorch)",
-            category="DepthAnythingAccel/Reference",
+            category="Depth Anything Accel/PyTorch",
             description=(
                 "Runs the PyTorch DA2 reference at native aspect ratio, "
                 "aligning inference height and width to patch size 14."
@@ -280,7 +280,7 @@ class DepthAccelLoadOnnxModel(io.ComfyNode):
         return io.Schema(
             node_id="DepthAccelLoadOnnxModel",
             display_name="Load Depth Model (ONNX)",
-            category="DepthAnythingAccel/ONNX",
+            category="Depth Anything Accel/ONNX",
             description=(
                 "Loads a dynamic-shape DA2 ONNX model from "
                 "ComfyUI/models/depthanything with ONNX Runtime."
@@ -333,7 +333,7 @@ class DepthAccelEstimateDepthOnnx(io.ComfyNode):
         return io.Schema(
             node_id="DepthAccelEstimateDepthOnnx",
             display_name="Estimate Depth (ONNX)",
-            category="DepthAnythingAccel/ONNX",
+            category="Depth Anything Accel/ONNX",
             description=(
                 "Runs a dynamic-shape DA2 ONNX model at native aspect ratio, "
                 "aligning inference height and width to patch size 14."
@@ -362,7 +362,7 @@ class DepthAccelLoadTensorrtModel(io.ComfyNode):
         return io.Schema(
             node_id="DepthAccelLoadTensorrtModel",
             display_name="Load Depth Model (TensorRT)",
-            category="DepthAnythingAccel/TensorRT",
+            category="Depth Anything Accel/TensorRT",
             description=(
                 "Loads a dynamic-shape TensorRT engine from "
                 "ComfyUI/models/depthanything."
@@ -401,7 +401,7 @@ class DepthAccelEstimateDepthTensorrt(io.ComfyNode):
         return io.Schema(
             node_id="DepthAccelEstimateDepthTensorrt",
             display_name="Estimate Depth (TensorRT)",
-            category="DepthAnythingAccel/TensorRT",
+            category="Depth Anything Accel/TensorRT",
             description=(
                 "Runs a dynamic-shape TensorRT engine at native aspect ratio, "
                 "aligning inference height and width to patch size 14."
@@ -425,7 +425,7 @@ class DepthAccelExportOnnx(io.ComfyNode):
         return io.Schema(
             node_id="DepthAccelExportOnnx",
             display_name="Export to ONNX",
-            category="DepthAnythingAccel/Convert",
+            category="Depth Anything Accel/Convert",
             description=(
                 "Exports the loaded PyTorch model to a dynamic-shape ONNX graph "
                 "in ComfyUI/models/depthanything and returns it as an ONNX "
@@ -527,7 +527,7 @@ class DepthAccelFuseOnnxAttention(io.ComfyNode):
         return io.Schema(
             node_id="DepthAccelFuseOnnxAttention",
             display_name="Fuse ONNX Attention",
-            category="DepthAnythingAccel/Convert",
+            category="Depth Anything Accel/Convert",
             description=(
                 "Rewrites an explicit-graph ONNX model into ONNX Runtime's "
                 "fused-attention graph (writes ``<name>_fused.onnx`` to "
@@ -560,7 +560,7 @@ class DepthAccelBuildTensorrtEngine(io.ComfyNode):
         return io.Schema(
             node_id="DepthAccelBuildTensorrtEngine",
             display_name="Build TensorRT Engine",
-            category="DepthAnythingAccel/Convert",
+            category="Depth Anything Accel/Convert",
             description=(
                 "Builds a dynamic-shape TensorRT engine from an explicit-graph "
                 "ONNX model (writes ``<name>.trt`` to "

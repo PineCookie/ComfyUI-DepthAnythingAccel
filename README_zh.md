@@ -82,7 +82,7 @@ DA2 Giant 尚未公开发布；你自行提供的 `vitg` checkpoint 会被自动
         [Load Depth Model (PyTorch)]
 ```
 
-节点位于 `DepthAnythingAccel` 分类。选择模型文件（可选调整精度）即可；encoder 与
+节点位于 `Depth Anything Accel` 分类。选择模型文件（可选调整精度）即可；encoder 与
 DA2/DAD 家族会从 checkpoint 自动识别。
 
 ## 更快：ONNX Runtime / TensorRT
