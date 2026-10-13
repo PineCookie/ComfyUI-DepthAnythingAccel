@@ -7,19 +7,15 @@ ComfyUI — one pipeline that runs the same model on **PyTorch, ONNX Runtime, or
 
 ## What it does
 
-- **Native resolution.** The input is not resized to 518×518: it is only
-  aligned to the 14-pixel patch grid, and the depth map is resized back to the
-  original image size.
-- **Three backends, one pipeline.** The same model runs on PyTorch
-  (reference), ONNX Runtime (CUDA or CPU), or TensorRT. Conversion happens
-  inside the graph — `Load → Export to ONNX → (Fuse) → (Build TensorRT) → Estimate` —
-  with progress printed to the console. No command line, no refresh.
-- **DA2 and DAD in one node set.** Distill-Any-Depth uses the same architecture
-  as Depth Anything V2, so both share the same nodes. The encoder
-  (small/base/large/giant) and the family (DA2 vs DAD) are detected
-  automatically.
-- **Auto-download.** Pick a supported checkpoint in the Load node and it is
-  downloaded into `ComfyUI/models/depthanything/` if missing.
+- **Keeps fine detail.** Images are not shrunk to 518×518 first: the model
+  sees your image at (almost exactly) its own resolution, and the depth map
+  comes back at the original size.
+- **Gets faster without leaving ComfyUI.** Convert the model to ONNX Runtime
+  or TensorRT with nodes inside your workflow — no command line, no restart.
+- **DA2 and Distill-Any-Depth in one node set.** Both use the same
+  architecture; the model size and family are detected from the checkpoint.
+- **Auto-download.** Pick a supported model in the Load node and it is
+  downloaded on first use.
 
 Measured on an RTX 5070 Ti (FP16, 784×1176):
 
@@ -35,22 +31,63 @@ faster than PyTorch. All backends closely match the FP32 reference output
 
 ## Installation
 
-### Option 1: ComfyUI Manager (recommended)
+**ComfyUI Manager (recommended):** search for `DepthAnythingAccel` and install.
 
-Search for `DepthAnythingAccel` in ComfyUI Manager and install it.
-
-### Option 2: manual
+**Manual:**
 
 ```powershell
 git clone https://github.com/PineCookie/ComfyUI-DepthAnythingAccel "$env:ComfyUI\custom_nodes\ComfyUI-DepthAnythingAccel"
 & "$env:ComfyUI\.venv\Scripts\python.exe" -m pip install -r "$env:ComfyUI\custom_nodes\ComfyUI-DepthAnythingAccel\requirements.txt"
 ```
 
-### Optional backends
+This is all the PyTorch nodes need. ONNX Runtime and TensorRT are optional;
+see [Faster](#faster-onnx-runtime--tensorrt).
 
-The PyTorch nodes run on anything ComfyUI runs on and need nothing extra.
-ONNX Runtime and TensorRT are optional; install what fits your machine into
-ComfyUI's Python:
+## Quick start
+
+Open ComfyUI's workflow templates and pick *Depth estimation - PyTorch*
+under this node pack, or build it yourself:
+
+```text
+[Load Image] -> [Estimate Depth (PyTorch)] -> [Save Image]
+                         ^
+        [Load Depth Model (PyTorch)]
+```
+
+Nodes are in the `Depth Anything Accel` category. Pick a model and, optionally,
+a precision. The example uses DA2 Small, which is small and licensed for
+commercial use; see [Models](#models) for the others.
+
+## Faster: ONNX Runtime / TensorRT
+
+Conversion nodes chain directly in the graph: each takes the previous model
+and returns one ready to use. The converted files are saved to
+`ComfyUI/models/depthanything/`, so later sessions can load them with the
+`Load Depth Model (ONNX)` / `(TensorRT)` nodes and skip converting.
+
+**ONNX Runtime (~1.4× faster)**
+
+```text
+[Load Depth Model (PyTorch)] -> [Export to ONNX] -> [Fuse ONNX Attention] -> [Estimate Depth (ONNX)]
+```
+
+`Fuse ONNX Attention` is where the speedup comes from. It is optional; the
+unfused model also runs, just slower.
+
+**TensorRT (~2–2.7× faster again, NVIDIA only)** — template *Depth estimation - TensorRT*
+
+```text
+[Load Depth Model (PyTorch)] -> [Export to ONNX] -> [Build TensorRT Engine] -> [Estimate Depth (TensorRT)]
+```
+
+> Build engines from the unfused ONNX model. An engine accepts any input up to
+> its `Max H` / `Max W` and is tied to the TensorRT version and GPU that built
+> it — rebuild after upgrading TensorRT or changing GPUs (engines built by
+> these nodes report a version mismatch on load).
+
+### Installing the optional backends
+
+Install what fits your machine into ComfyUI's Python:
 
 | Machine | ONNX Runtime | TensorRT |
 | --- | --- | --- |
@@ -62,14 +99,25 @@ ComfyUI's Python:
   installing `onnxruntime-gpu`.
 - `Export to ONNX` and `Fuse ONNX Attention` need `onnx` (`onnxslim` is
   optional). Export is verified on CUDA and CPU.
-- FP16/BF16 precision in the PyTorch loader only takes effect on CUDA/ROCm;
-  elsewhere it runs in FP32.
+
+## Limits
+
+- **Image size.** To avoid running out of VRAM, the PyTorch and ONNX nodes
+  refuse inputs above about 2.6 MP in FP32 and 4.7 MP in FP16/BF16; resize
+  larger images first. TensorRT is limited by the engine's `Max H` / `Max W`
+  instead.
+- **Size rounding.** Width and height are rounded down to a multiple of 14
+  for the model (its patch size); the output is resized back to your image.
+- **Batches.** ONNX Runtime processes a batch in one call; PyTorch and
+  TensorRT run one image at a time.
+- **Precision.** FP16/BF16 in the PyTorch loader only takes effect on
+  CUDA/ROCm; elsewhere it runs in FP32.
 
 ## Models
 
-Weights are not bundled. Pick a checkpoint in the Load node's dropdown to
-download it automatically, or place files in `ComfyUI/models/depthanything/`
-yourself (subfolders work).
+Weights are not bundled. Pick a model in the Load node's dropdown to download
+it automatically, or place files in `ComfyUI/models/depthanything/` yourself
+(subfolders work).
 
 | Model | Source | License |
 | --- | --- | --- |
@@ -84,54 +132,6 @@ yourself (subfolders work).
 
 DA2 Giant has not been released publicly; a `vitg` checkpoint you supply
 yourself is detected and loaded.
-
-## Quick start
-
-```text
-[Load Image] -> [Estimate Depth (PyTorch)] -> [Save Image]
-                         ^
-        [Load Depth Model (PyTorch)]
-```
-
-Nodes are in the `Depth Anything Accel` category. Pick a model file and
-(optionally) a precision; the encoder and DA2/DAD family are detected from the
-checkpoint.
-
-## Faster: ONNX Runtime / TensorRT
-
-Conversion nodes are **chainable**: each takes the previous model and returns a
-ready-to-use model handle, so nothing needs a ComfyUI refresh. Generated files
-are written to `ComfyUI/models/depthanything/`, so the `Load ...` nodes can
-reuse them later.
-
-**ONNX Runtime (~1.4× faster)**
-
-```text
-[Load Depth Model (PyTorch)] -> [Export to ONNX] -> [Fuse ONNX Attention] -> [Estimate Depth (ONNX)]
-```
-
-`Fuse ONNX Attention` rewrites the exported graph to use ONNX Runtime's fused
-attention, which is where the speedup comes from. It is optional; the unfused
-model also runs, just slower.
-
-**TensorRT (~2–2.7× faster again, NVIDIA only)**
-
-```text
-[Load Depth Model (PyTorch)] -> [Export to ONNX] -> [Build TensorRT Engine] -> [Estimate Depth (TensorRT)]
-```
-
-> Build engines from the unfused ONNX model. An engine accepts any input up to
-> its `Max H` / `Max W` and is tied to the TensorRT version and GPU that built
-> it — rebuild after upgrading TensorRT or changing GPUs (engines built by
-> these nodes report a version mismatch on load).
-
-### Input size limits
-
-To avoid running out of VRAM, the PyTorch and ONNX nodes refuse inputs above
-about 2.6 MP in FP32 and 4.7 MP in FP16/BF16; resize larger images first.
-TensorRT is limited by the engine's `Max H` / `Max W` instead. A batch of
-images is processed in one call on ONNX Runtime and one image at a time on
-PyTorch and TensorRT.
 
 ## Nodes
 
