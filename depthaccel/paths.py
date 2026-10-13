@@ -37,7 +37,8 @@ def default_model_dir(comfyui_root: Path | None = None) -> Path:
         paths = folder_paths.get_folder_paths("depthanything")
         if paths:
             return Path(paths[0])
-    except Exception:
+    except (ImportError, KeyError):
+        # CLI tools run outside ComfyUI, where folder_paths is missing or unregistered.
         pass
     return (comfyui_root or default_comfyui_root()) / "models" / "depthanything"
 

@@ -143,6 +143,10 @@ def load_reference_model(
         )
 
     target_device = device or _resolve_device()
+    if target_device.type != "cuda":
+        # Autocast is only used on CUDA; record what actually runs so the
+        # resolution budget matches.
+        precision = "fp32"
     model.eval().to(target_device)
     return ReferenceDepthModel(
         model=model,
@@ -167,7 +171,7 @@ def infer_reference_raw(
     """Run DA2 on a prepared BCHW tensor without output normalization."""
     outputs = []
     autocast = nullcontext()
-    if reference.precision != "fp32" and reference.device.type == "cuda":
+    if reference.precision != "fp32":
         dtype = torch.float16 if reference.precision == "fp16" else torch.bfloat16
         autocast = torch.autocast("cuda", dtype=dtype)
 

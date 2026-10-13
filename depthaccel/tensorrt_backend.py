@@ -161,14 +161,12 @@ def infer_tensorrt_raw(
     if height < model.min_hw[0] or width < model.min_hw[1] or height > model.max_hw[0] or width > model.max_hw[1]:
         # The profile bounds each side independently, so a valid total pixel
         # count can still exceed a per-side limit; name the bounds to rebuild.
-        required_h = -(-height // PATCH_SIZE) * PATCH_SIZE
-        required_w = -(-width // PATCH_SIZE) * PATCH_SIZE
         raise ValueError(
             f"TensorRT input {height}x{width} is outside the engine profile "
             f"[{model.min_hw[0]},{model.min_hw[1]}]..[{model.max_hw[0]},{model.max_hw[1]}]. "
             f"The profile limits each side independently, not the total pixel "
             f"count, so rebuild the engine with Max H / Max W of at least "
-            f"{required_h}x{required_w} (multiples of {PATCH_SIZE})."
+            f"{height}x{width} (multiples of {PATCH_SIZE})."
         )
 
     context, depth = _bind(model, prepared)

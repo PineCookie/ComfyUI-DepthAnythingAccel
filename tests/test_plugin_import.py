@@ -23,7 +23,9 @@ def _load_extension(package_name: str = PACKAGE_NAME):
     module = importlib.util.module_from_spec(spec)
     sys.modules[package_name] = module
     spec.loader.exec_module(module)
-    return asyncio.run(module.comfy_entrypoint())
+    extension = asyncio.run(module.comfy_entrypoint())
+    asyncio.run(extension.on_load())
+    return extension
 
 
 class PluginImportTests(unittest.TestCase):

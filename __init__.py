@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing_extensions import override
 
+import folder_paths
 from comfy_api.latest import ComfyExtension, io
 
 from .nodes import (
@@ -19,10 +20,6 @@ from .nodes import (
 class DepthAccelExtension(ComfyExtension):
     @override
     async def on_load(self) -> None:
-        try:
-            import folder_paths
-        except ImportError:
-            return
         folder_paths.add_model_folder_path(
             "depthanything",
             str(Path(folder_paths.models_dir) / "depthanything"),

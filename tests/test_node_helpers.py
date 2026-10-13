@@ -6,6 +6,8 @@ import sys
 import unittest
 from unittest import mock
 
+import torch
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COMFYUI_ROOT = REPO_ROOT.parents[1]
@@ -97,11 +99,11 @@ class NodeHelperTests(unittest.TestCase):
         )
 
     def test_resolve_precision_auto_picks_cuda_fp16(self):
-        with mock.patch("torch.cuda.is_available", return_value=True):
+        with mock.patch("comfy.model_management.get_torch_device", return_value=torch.device("cuda")):
             self.assertEqual(self.nodes._resolve_precision("auto"), "fp16")
 
     def test_resolve_precision_auto_picks_cpu_fp32(self):
-        with mock.patch("torch.cuda.is_available", return_value=False):
+        with mock.patch("comfy.model_management.get_torch_device", return_value=torch.device("cpu")):
             self.assertEqual(self.nodes._resolve_precision("auto"), "fp32")
 
     def test_resolve_precision_passes_explicit_values_through(self):

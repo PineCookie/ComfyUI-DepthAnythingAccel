@@ -1,6 +1,8 @@
 import os
 from pathlib import Path as _Path
 
+import comfy.model_management
+import folder_paths
 from comfy_api.latest import io
 
 from .depthaccel.onnx_backend import estimate_depth_onnx, load_onnx_model
@@ -16,45 +18,15 @@ DepthAccelTensorrtModelIO = io.Custom("DEPTHACCEL_TENSORRT_MODEL")
 _MODEL_FOLDER = "depthanything"
 
 
-def _model_folder_dirs() -> list[_Path]:
-    """Registered depthanything folders, falling back to the ComfyUI default."""
-    try:
-        import folder_paths
-
-        paths = folder_paths.get_folder_paths(_MODEL_FOLDER)
-        if paths:
-            return [_Path(p) for p in paths]
-    except Exception:
-        pass
-    return [_Path(__file__).resolve().parents[2] / "models" / _MODEL_FOLDER]
-
-
 def _model_folder_dir() -> str:
     """Return the first registered depthanything model folder."""
-    return str(_model_folder_dirs()[0])
+    return folder_paths.get_folder_paths(_MODEL_FOLDER)[0]
 
 
 def _model_folder_files(*suffixes: str) -> list[str]:
-    """List model filenames currently present in the depthanything folders."""
-    try:
-        import folder_paths
-
-        files = folder_paths.get_filename_list(_MODEL_FOLDER)
-    except Exception:
-        files = []
-        for folder in _model_folder_dirs():
-            if folder.is_dir():
-                files += [p.name for p in folder.iterdir() if p.is_file()]
-    if not suffixes:
-        return sorted(set(files))
+    """List model filenames with the given suffixes in the depthanything folders."""
     lowered = tuple(s.lower() for s in suffixes)
-    return sorted(f for f in files if f.lower().endswith(lowered))
-
-
-def _default_option(options: list[str], preferred: str) -> str:
-    if not options:
-        return ""
-    return preferred if preferred in options else options[0]
+    return sorted(f for f in folder_paths.get_filename_list(_MODEL_FOLDER) if f.lower().endswith(lowered))
 
 
 def _preferred_option(options: list[str], *preferred: str) -> str:
@@ -99,14 +71,7 @@ def _resolve_precision(precision: str) -> str:
     """
     if precision != "auto":
         return precision
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            return "fp16"
-    except Exception:
-        pass
-    return "fp32"
+    return "fp16" if comfy.model_management.get_torch_device().type == "cuda" else "fp32"
 
 
 def _default_onnx_device() -> str:
@@ -149,9 +114,9 @@ def _is_within_folder(path: _Path) -> bool:
     folder even if ``get_full_path_or_raise`` were given a hostile name.
     """
     path = path.resolve()
-    for folder in _model_folder_dirs():
+    for folder in folder_paths.get_folder_paths(_MODEL_FOLDER):
         try:
-            folder_real = folder.resolve()
+            folder_real = _Path(folder).resolve()
             if os.path.commonpath([str(folder_real), str(path)]) == str(folder_real):
                 return True
         except ValueError:
@@ -188,8 +153,6 @@ def _resolve_existing(name: str, suffixes: tuple[str, ...]) -> _Path:
     a value that is not already a file in ``models/depthanything`` is rejected
     instead of being searched across cwd/artifacts/arbitrary absolute paths.
     """
-    import folder_paths
-
     full = folder_paths.get_full_path_or_raise(_MODEL_FOLDER, name)
     return _require_in_folder(_Path(full), suffixes)
 
@@ -201,8 +164,6 @@ def _resolve_checkpoint(model: str) -> _Path:
     ``models/depthanything`` first; anything else must already be a file
     inside one of those folders.
     """
-    import folder_paths
-
     from .depthaccel.download import MODEL_SOURCES, download_model
 
     if model in MODEL_SOURCES and folder_paths.get_full_path(_MODEL_FOLDER, model) is None:
@@ -467,6 +428,10 @@ class DepthAccelExportOnnx(io.ComfyNode):
                     "device",
                     options=["cuda", "cpu"],
                     default=_default_onnx_device(),
+                    tooltip=(
+                        "Device of the returned ONNX Runtime model. The export "
+                        "itself runs where the loaded PyTorch model is."
+                    ),
                 ),
                 io.Int.Input(
                     "height",
@@ -557,6 +522,8 @@ class DepthAccelFuseOnnxAttention(io.ComfyNode):
     def execute(cls, onnx_model) -> io.NodeOutput:
         from .tools.fuse_onnx_attention import fuse_attention_model
 
+        if "depthaccel.attention" in onnx_model.metadata:
+            raise ValueError("This ONNX model is already fused; feed Fuse ONNX Attention the unfused model.")
         source = _Path(onnx_model.model_path)
         output = _Path(_model_folder_dir()) / f"{source.stem}_fused.onnx"
         fuse_attention_model(source, output)
@@ -621,13 +588,18 @@ class DepthAccelBuildTensorrtEngine(io.ComfyNode):
                 raise ValueError(
                     f"{label} height/width must be divisible by 14, got {value}."
                 )
-
-        source = _Path(onnx_model.model_path)
-        if source.stem.endswith("_fused"):
+        if not (min_h <= opt_h <= max_h and min_w <= opt_w <= max_w):
+            raise ValueError(
+                f"TensorRT profile needs min <= opt <= max for each side, got "
+                f"min={min_h}x{min_w}, opt={opt_h}x{opt_w}, max={max_h}x{max_w}."
+            )
+        if "depthaccel.attention" in onnx_model.metadata:
             raise ValueError(
                 "Build TensorRT Engine needs the explicit (non-fused) ONNX "
                 "graph; feed it the unfused model."
             )
+
+        source = _Path(onnx_model.model_path)
         output = _Path(_model_folder_dir()) / f"{source.stem}.trt"
         build_engine(
             source,
