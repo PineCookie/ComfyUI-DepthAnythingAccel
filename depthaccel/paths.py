@@ -19,7 +19,7 @@ def _plugin_root() -> Path:
 def default_comfyui_root() -> Path:
     """Return the ComfyUI root this plugin is installed under.
 
-    The plugin lives at ``<ComfyUI>/custom_nodes/ComfyUI-DepthAccel``, so the
+    The plugin lives at ``<ComfyUI>/custom_nodes/ComfyUI-DepthAnythingAccel``, so the
     depthaccel package sits two levels above the custom_nodes directory.
     """
     return _plugin_root().parents[1]

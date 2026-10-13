@@ -542,8 +542,9 @@ class DepthAccelFuseOnnxAttention(io.ComfyNode):
             category="DepthAnythingAccel/Convert",
             description=(
                 "Rewrites an explicit-graph ONNX model into ONNX Runtime's "
-                "fused-attention graph (writes ``<name>_fused.onnx`` next to "
-                "the source) and returns the fused model handle. The encoder "
+                "fused-attention graph (writes ``<name>_fused.onnx`` to "
+                "ComfyUI/models/depthanything) and returns the fused model "
+                "handle. The encoder "
                 "is read from the graph metadata."
             ),
             inputs=[DepthAccelOnnxModelIO.Input("onnx_model")],
@@ -572,8 +573,9 @@ class DepthAccelBuildTensorrtEngine(io.ComfyNode):
             category="DepthAnythingAccel/Convert",
             description=(
                 "Builds a dynamic-shape TensorRT engine from an explicit-graph "
-                "ONNX model (writes a ``.trt`` engine next to the source) and "
-                "returns it as a TensorRT model handle. Requires the optional "
+                "ONNX model (writes ``<name>.trt`` to "
+                "ComfyUI/models/depthanything) and returns it as a TensorRT "
+                "model handle. Requires the optional "
                 "tensorrt dependency."
             ),
             inputs=[
