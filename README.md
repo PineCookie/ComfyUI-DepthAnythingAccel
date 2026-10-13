@@ -8,25 +8,18 @@ ComfyUI — one pipeline that runs the same model on **PyTorch, ONNX Runtime, or
 ## What it does
 
 - **Native resolution.** The input is not resized to 518×518: it is only
-  aligned to the 14-pixel patch grid and the depth map is resized back to the
-  original image size afterwards. To avoid running out of VRAM, the PyTorch
-  and ONNX nodes refuse inputs above about 2.6 MP in FP32 and 4.7 MP in
-  FP16/BF16; resize larger images first. TensorRT is bounded by its engine's
-  `Max H` / `Max W` instead.
-- **Three backends, one pipeline.** The same model can run on PyTorch
-  (reference), ONNX Runtime (CUDA or CPU), or TensorRT. Nodes are chained directly in
-  the graph — `Load → Export to ONNX → (Fuse) → (Build TensorRT) → Estimate` —
+  aligned to the 14-pixel patch grid, and the depth map is resized back to the
+  original image size.
+- **Three backends, one pipeline.** The same model runs on PyTorch
+  (reference), ONNX Runtime (CUDA or CPU), or TensorRT. Conversion happens
+  inside the graph — `Load → Export to ONNX → (Fuse) → (Build TensorRT) → Estimate` —
   with progress printed to the console. No command line, no refresh.
 - **DA2 and DAD in one node set.** Distill-Any-Depth uses the same architecture
-  as Depth Anything V2, so both families share the same nodes. The encoder
-  (small/base/large/giant) and the family (DA2 vs DAD) are detected from the
-  checkpoint automatically.
-- **Dynamic input size.** One exported ONNX model accepts any
-  batch/height/width (14-pixel aligned). A TensorRT engine accepts any
-  height/width within its `Max H` / `Max W` and runs a batch one image at a
-  time.
-- **Auto-download.** If a supported checkpoint is missing, the Load node
-  downloads it into `ComfyUI/models/depthanything/`.
+  as Depth Anything V2, so both share the same nodes. The encoder
+  (small/base/large/giant) and the family (DA2 vs DAD) are detected
+  automatically.
+- **Auto-download.** Pick a supported checkpoint in the Load node and it is
+  downloaded into `ComfyUI/models/depthanything/` if missing.
 
 Measured on an RTX 5070 Ti (FP16, 784×1176):
 
@@ -36,8 +29,8 @@ Measured on an RTX 5070 Ti (FP16, 784×1176):
 | Base (`vitb`) | 51.0 ms | 37.4 ms | 16.5 ms |
 | Large (`vitl`) | 127.3 ms | 93.5 ms | 47.3 ms |
 
-TensorRT is about 2–2.7× faster than ONNX Runtime, which is about 1.4× faster
-than PyTorch. All backends match the FP32 reference output closely
+TensorRT is about 2–2.7× faster than fused ONNX Runtime, which is about 1.4×
+faster than PyTorch. All backends closely match the FP32 reference output
 (correlation ≈ 1.0, normalized error ≈ 1e-3).
 
 ## Installation
@@ -72,9 +65,11 @@ ComfyUI's Python:
 - FP16/BF16 precision in the PyTorch loader only takes effect on CUDA/ROCm;
   elsewhere it runs in FP32.
 
-## Download models
+## Models
 
-Weights are not bundled with this repository. You can download them manually, or pick a supported checkpoint in the Load node's dropdown — models that are not present are downloaded automatically into `ComfyUI/models/depthanything/`:
+Weights are not bundled. Pick a checkpoint in the Load node's dropdown to
+download it automatically, or place files in `ComfyUI/models/depthanything/`
+yourself (subfolders work).
 
 | Model | Source | License |
 | --- | --- | --- |
@@ -83,82 +78,77 @@ Weights are not bundled with this repository. You can download them manually, or
 | Distill-Any-Depth Small / Base / Large | `xingyang1/Distill-Any-Depth` | Apache-2.0 (model card) |
 
 > ⚠️ Kijai's conversions are labeled CC-BY-4.0, but they are converted from the
-> official weights, so treat Base / Large as non-commercial either way. Read
-> [THIRD_PARTY.md](THIRD_PARTY.md) before using or redistributing them.
+> official weights, so treat Base / Large as non-commercial either way. ONNX
+> models and engines you export carry the same license as their checkpoint.
+> See [THIRD_PARTY.md](THIRD_PARTY.md).
 
-DA2 Giant has not been released publicly. A `vitg` checkpoint you place in
-`ComfyUI/models/depthanything/` yourself is detected and loaded.
+DA2 Giant has not been released publicly; a `vitg` checkpoint you supply
+yourself is detected and loaded.
 
 ## Quick start
 
-1. Find the `DepthAnythingAccel` category in the node panel.
-2. Connect an image:
-
 ```text
-[Load Depth Model (PyTorch)] -> [Estimate Depth (PyTorch)] -> Save Image
+[Load Image] -> [Estimate Depth (PyTorch)] -> [Save Image]
+                         ^
+        [Load Depth Model (PyTorch)]
 ```
 
-The encoder and the DA2/DAD family are detected automatically from the
-checkpoint; you only pick the model file and (optionally) the precision.
+Nodes are in the `DepthAnythingAccel` category. Pick a model file and
+(optionally) a precision; the encoder and DA2/DAD family are detected from the
+checkpoint.
 
-## Want more speed? Use ONNX / TensorRT
+## Faster: ONNX Runtime / TensorRT
 
-Conversion nodes are **chainable**: each one takes the previous model and
-returns a ready-to-use model handle, so nothing needs a ComfyUI refresh. The
-generated files are also written into `ComfyUI/models/depthanything/` so the
-`Load ...` nodes can reuse them later.
+Conversion nodes are **chainable**: each takes the previous model and returns a
+ready-to-use model handle, so nothing needs a ComfyUI refresh. Generated files
+are written to `ComfyUI/models/depthanything/`, so the `Load ...` nodes can
+reuse them later.
 
-**ONNX (~1.4× faster)**
-
-```text
-[Load Depth Model (PyTorch)] -> [Export to ONNX] -> [Estimate Depth (ONNX)]
-```
-
-`Export to ONNX` returns an explicit-graph model; `Fuse ONNX Attention`
-(optional, ~faster) rewrites it into ORT's fused-attention graph. Prefer the
-fused handle when you do not plan to build a TensorRT engine:
+**ONNX Runtime (~1.4× faster)**
 
 ```text
 [Load Depth Model (PyTorch)] -> [Export to ONNX] -> [Fuse ONNX Attention] -> [Estimate Depth (ONNX)]
 ```
 
-**TensorRT (~2–2.7×, fastest)**
+`Fuse ONNX Attention` rewrites the exported graph to use ONNX Runtime's fused
+attention, which is where the speedup comes from. It is optional; the unfused
+model also runs, just slower.
+
+**TensorRT (~2–2.7× faster again, NVIDIA only)**
 
 ```text
 [Load Depth Model (PyTorch)] -> [Export to ONNX] -> [Build TensorRT Engine] -> [Estimate Depth (TensorRT)]
 ```
 
-> A TensorRT engine must be built from the explicit (non-fused) ONNX graph; its
-> `Max H` / `Max W` profile bounds the largest input resolution it accepts.
-> Engines are tied to the TensorRT version and GPU they were built on — rebuild
-> after upgrading TensorRT or changing GPUs (the loader reports a mismatch).
+> Build engines from the unfused ONNX model. An engine accepts any input up to
+> its `Max H` / `Max W` and is tied to the TensorRT version and GPU that built
+> it — rebuild after upgrading TensorRT or changing GPUs (engines built by
+> these nodes report a version mismatch on load).
+
+### Input size limits
+
+To avoid running out of VRAM, the PyTorch and ONNX nodes refuse inputs above
+about 2.6 MP in FP32 and 4.7 MP in FP16/BF16; resize larger images first.
+TensorRT is limited by the engine's `Max H` / `Max W` instead. A batch of
+images is processed in one call on ONNX Runtime and one image at a time on
+PyTorch and TensorRT.
 
 ## Nodes
 
-**PyTorch**
-
-- `Load Depth Model (PyTorch)`
-- `Estimate Depth (PyTorch)`
-
-**ONNX Runtime**
-
-- `Load Depth Model (ONNX)`
-- `Estimate Depth (ONNX)`
-
-**TensorRT**
-
-- `Load Depth Model (TensorRT)`
-- `Estimate Depth (TensorRT)`
-
-**Conversion**
-
-- `Export to ONNX` — PyTorch model → explicit ONNX model handle
-- `Fuse ONNX Attention` — explicit ONNX → fused ONNX model handle
-- `Build TensorRT Engine` — explicit ONNX → TensorRT engine handle
+| Node | Does |
+| --- | --- |
+| `Load Depth Model (PyTorch)` / `Estimate Depth (PyTorch)` | Reference backend |
+| `Load Depth Model (ONNX)` / `Estimate Depth (ONNX)` | ONNX Runtime backend |
+| `Load Depth Model (TensorRT)` / `Estimate Depth (TensorRT)` | TensorRT backend |
+| `Export to ONNX` | PyTorch model → ONNX model |
+| `Fuse ONNX Attention` | ONNX model → fused ONNX model |
+| `Build TensorRT Engine` | Unfused ONNX model → TensorRT engine |
 
 ## License
 
-Source code is licensed under the Apache License 2.0; see [LICENSE](LICENSE). Model weights are licensed separately by their respective owners; see [THIRD_PARTY.md](THIRD_PARTY.md).
+Source code is licensed under the Apache License 2.0; see [LICENSE](LICENSE).
+Model weights are licensed separately by their owners; see
+[THIRD_PARTY.md](THIRD_PARTY.md).
 
 ## For developers
 
