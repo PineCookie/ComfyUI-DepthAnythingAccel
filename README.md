@@ -9,7 +9,10 @@ ComfyUI — one pipeline that runs the same model on **PyTorch, ONNX Runtime, or
 
 - **Native resolution.** The input is not resized to 518×518: it is only
   aligned to the 14-pixel patch grid and the depth map is resized back to the
-  original image size afterwards.
+  original image size afterwards. To avoid running out of VRAM, the PyTorch
+  and ONNX nodes refuse inputs above about 2.6 MP in FP32 and 4.7 MP in
+  FP16/BF16; resize larger images first. TensorRT is bounded by its engine's
+  `Max H` / `Max W` instead.
 - **Three backends, one pipeline.** The same model can run on PyTorch
   (reference), ONNX Runtime (CUDA or CPU), or TensorRT. Nodes are chained directly in
   the graph — `Load → Export to ONNX → (Fuse) → (Build TensorRT) → Estimate` —
@@ -18,8 +21,10 @@ ComfyUI — one pipeline that runs the same model on **PyTorch, ONNX Runtime, or
   as Depth Anything V2, so both families share the same nodes. The encoder
   (small/base/large/giant) and the family (DA2 vs DAD) are detected from the
   checkpoint automatically.
-- **Dynamic input size.** One exported model or engine accepts any
-  batch/height/width (14-pixel aligned).
+- **Dynamic input size.** One exported ONNX model accepts any
+  batch/height/width (14-pixel aligned). A TensorRT engine accepts any
+  height/width within its `Max H` / `Max W` and runs a batch one image at a
+  time.
 - **Auto-download.** If a supported checkpoint is missing, the Load node
   downloads it into `ComfyUI/models/depthanything/`.
 
@@ -71,12 +76,18 @@ ComfyUI's Python:
 
 Weights are not bundled with this repository. You can download them manually, or pick a supported checkpoint in the Load node's dropdown — models that are not present are downloaded automatically into `ComfyUI/models/depthanything/`:
 
-| Model | Source | Notes |
+| Model | Source | License |
 | --- | --- | --- |
-| DA2 Small / Base / Large | Kijai safetensors (default) or official `.pth` | Base / Large / Giant are non-commercial |
-| Distill-Any-Depth | `xingyang1/Distill-Any-Depth` | Small / Base / Large (Multi-Teacher); family is auto-detected from the name |
+| DA2 Small | `Kijai/DepthAnythingV2-safetensors` (default) or `depth-anything/Depth-Anything-V2-Small` (`.pth`) | Apache-2.0 |
+| DA2 Base / Large | `Kijai/DepthAnythingV2-safetensors` (default) or `depth-anything/Depth-Anything-V2-Base` / `-Large` (`.pth`) | CC-BY-NC-4.0, **non-commercial** |
+| Distill-Any-Depth Small / Base / Large | `xingyang1/Distill-Any-Depth` | Apache-2.0 (model card) |
 
-> ⚠️ Official DA2 Base / Large / Giant weights are **non-commercial** (CC-BY-NC). Read [THIRD_PARTY.md](THIRD_PARTY.md) before using or redistributing them.
+> ⚠️ Kijai's conversions are labeled CC-BY-4.0, but they are converted from the
+> official weights, so treat Base / Large as non-commercial either way. Read
+> [THIRD_PARTY.md](THIRD_PARTY.md) before using or redistributing them.
+
+DA2 Giant has not been released publicly. A `vitg` checkpoint you place in
+`ComfyUI/models/depthanything/` yourself is detected and loaded.
 
 ## Quick start
 

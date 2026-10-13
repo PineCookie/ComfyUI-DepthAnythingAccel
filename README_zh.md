@@ -8,14 +8,17 @@
 ## 功能简介
 
 - **原生分辨率**：输入不会被缩放成 518×518,只按 14 像素 patch 对齐;深度图最后
-  会还原回原始图片尺寸。
+  会还原回原始图片尺寸。为避免显存耗尽，PyTorch 与 ONNX 节点会拒绝超过约 2.6 MP
+  (FP32)或 4.7 MP(FP16/BF16)的输入，请先缩小图片;TensorRT 则受引擎的
+  `Max H` / `Max W` 限制。
 - **三种后端,一条流程**：同一模型可跑 PyTorch(参考)/ ONNX Runtime(CUDA 或 CPU)/ TensorRT。
   节点可在图内直接串联:`Load → Export to ONNX → (Fuse) → (Build TensorRT) → Estimate`,
   转换进度输出到控制台;无需命令行、无需刷新。
 - **DA2 与 DAD 用同一套节点**：Distill-Any-Depth 与 Depth Anything V2 架构一致,
   两者共用全部节点;encoder(small/base/large/giant)与家族(DA2/DAD)会从
   checkpoint 自动识别。
-- **动态输入尺寸**：一个导出的模型或引擎可接受任意 14 对齐的 batch/H/W。
+- **动态输入尺寸**：一个导出的 ONNX 模型可接受任意 14 对齐的 batch/H/W。TensorRT
+  引擎接受 `Max H` / `Max W` 范围内的任意 H/W，batch 会逐张处理。
 - **自动下载**：受支持的 checkpoint 缺失时,Load 节点会自动下载到
   `ComfyUI/models/depthanything/`。
 
@@ -63,12 +66,17 @@ PyTorch 节点在任何能运行 ComfyUI 的机器上都可用，无需额外依
 
 权重不随本仓库分发。你可以手动下载，或在 Load 节点的下拉里选择受支持的 checkpoint——本地没有的会自动下载到 `ComfyUI/models/depthanything/`：
 
-| 模型 | 来源 | 说明 |
+| 模型 | 来源 | 许可 |
 | --- | --- | --- |
-| DA2 Small / Base / Large | Kijai safetensors（默认）或官方 `.pth` | Base / Large / Giant 为非商业许可 |
-| Distill-Any-Depth | `xingyang1/Distill-Any-Depth` | Small / Base / Large(Multi-Teacher);家族按文件名自动识别 |
+| DA2 Small | `Kijai/DepthAnythingV2-safetensors`（默认）或 `depth-anything/Depth-Anything-V2-Small`（`.pth`） | Apache-2.0 |
+| DA2 Base / Large | `Kijai/DepthAnythingV2-safetensors`（默认）或 `depth-anything/Depth-Anything-V2-Base` / `-Large`（`.pth`） | CC-BY-NC-4.0，**非商业** |
+| Distill-Any-Depth Small / Base / Large | `xingyang1/Distill-Any-Depth` | Apache-2.0（模型卡） |
 
-> ⚠️ 官方 DA2 Base / Large / Giant 权重为**非商业**许可（CC-BY-NC）。使用或再分发前请阅读 [THIRD_PARTY.md](THIRD_PARTY.md)。
+> ⚠️ Kijai 的转换版本标注为 CC-BY-4.0，但它们由官方权重转换而来，Base / Large
+> 仍应按非商业许可对待。使用或再分发前请阅读 [THIRD_PARTY.md](THIRD_PARTY.md)。
+
+DA2 Giant 尚未公开发布。你自行放入 `ComfyUI/models/depthanything/` 的 `vitg`
+checkpoint 会被自动识别并加载。
 
 ## 快速上手
 
