@@ -32,6 +32,9 @@ class ReferenceDepthModel:
     model_path: Path
     encoder: str
     model_family: str
+    # ComfyUI ModelPatcher that moves ``model`` to ``device`` before each run;
+    # set by the node layer, None for CLI use.
+    patcher: object = None
 
 
 def _resolve_device() -> torch.device:
@@ -108,8 +111,13 @@ def load_reference_model(
     device: torch.device | None = None,
     comfyui_root: Path | None = None,
     model_family: str = "auto",
+    offload_device: torch.device | None = None,
 ) -> ReferenceDepthModel:
-    """Load a checkpoint, detecting the encoder when ``encoder`` is auto/None."""
+    """Load a checkpoint, detecting the encoder when ``encoder`` is auto/None.
+
+    ``device`` is where inference runs. Weights are placed there too, unless
+    ``offload_device`` is given for a caller that moves them itself.
+    """
     if encoder not in (None, "auto") and encoder not in MODEL_CONFIGS:
         raise ValueError(f"Unsupported DA2 encoder: {encoder}")
     if precision not in {"fp32", "fp16", "bf16"}:
@@ -147,7 +155,7 @@ def load_reference_model(
         # Autocast is only used on CUDA; record what actually runs so the
         # resolution budget matches.
         precision = "fp32"
-    model.eval().to(target_device)
+    model.eval().to(offload_device or target_device)
     return ReferenceDepthModel(
         model=model,
         device=target_device,

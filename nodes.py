@@ -2,6 +2,7 @@ import os
 from pathlib import Path as _Path
 
 import comfy.model_management
+import comfy.model_patcher
 import folder_paths
 from comfy_api.latest import io
 
@@ -16,6 +17,10 @@ DepthAccelOnnxModelIO = io.Custom("DEPTHACCEL_ONNX_MODEL")
 DepthAccelTensorrtModelIO = io.Custom("DEPTHACCEL_TENSORRT_MODEL")
 
 _MODEL_FOLDER = "depthanything"
+
+# Peak PyTorch activation memory per patch-aligned pixel, measured on vitl
+# (smaller encoders need less) and linear from 0.27 to 4.7 MP.
+_REFERENCE_BYTES_PER_PIXEL = {"fp32": 2100, "fp16": 1600, "bf16": 1600}
 
 
 def _model_folder_dir() -> str:
@@ -221,10 +226,16 @@ class DepthAccelLoadReferenceModel(io.ComfyNode):
         precision: str,
     ) -> io.NodeOutput:
         path = _resolve_checkpoint(model)
-        resolved_precision = _resolve_precision(precision)
+        load_device = comfy.model_management.get_torch_device()
+        offload_device = comfy.model_management.unet_offload_device()
         reference = load_reference_model(
             model_path=str(path),
-            precision=resolved_precision,
+            precision=_resolve_precision(precision),
+            device=load_device,
+            offload_device=offload_device,
+        )
+        reference.patcher = comfy.model_patcher.CoreModelPatcher(
+            reference.model, load_device=load_device, offload_device=offload_device
         )
         return io.NodeOutput(reference)
 
@@ -250,10 +261,15 @@ class DepthAccelEstimateDepth(io.ComfyNode):
 
     @classmethod
     def execute(cls, model, image: "io.Image.Type") -> io.NodeOutput:
-        if getattr(image, "ndim", None) == 4:
-            guard_inference_resolution(
-                int(image.shape[1]), int(image.shape[2]), model.precision
-            )
+        height, width = guard_inference_resolution(
+            int(image.shape[1]), int(image.shape[2]), model.precision
+        )
+        # Plain torch layers cannot be partially loaded, so force a full load.
+        comfy.model_management.load_models_gpu(
+            [model.patcher],
+            memory_required=height * width * _REFERENCE_BYTES_PER_PIXEL[model.precision],
+            force_full_load=True,
+        )
         return io.NodeOutput(estimate_depth(model, image))
 
 
@@ -478,6 +494,13 @@ class DepthAccelExportOnnx(io.ComfyNode):
         output = (
             _Path(_model_folder_dir())
             / f"{model.model_family}_{model.encoder}_{precision}_dynamic.onnx"
+        )
+        # Room for tracing plus the converted weight copy the export may make.
+        comfy.model_management.load_models_gpu(
+            [model.patcher],
+            memory_required=height * width * _REFERENCE_BYTES_PER_PIXEL[precision]
+            + comfy.model_management.module_size(model.model),
+            force_full_load=True,
         )
         export_dynamic_onnx(
             str(model.model_path),
