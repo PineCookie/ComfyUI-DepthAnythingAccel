@@ -57,12 +57,6 @@ MODEL_SOURCES: dict[str, dict[str, str]] = {
         "encoder": "vitl",
         "license": "CC-BY-NC-4.0",
     },
-    "depth_anything_v2_vitg.pth": {
-        "repo_id": "depth-anything/Depth-Anything-V2-Giant",
-        "filename": "depth_anything_v2_vitg.pth",
-        "encoder": "vitg",
-        "license": "CC-BY-NC-4.0",
-    },
     # Distill-Any-Depth (state-dict compatible with the shared DA2 runtime).
     # The upstream repository stores these under subfolders named after their
     # size; each is downloaded under the canonical flat key name below.
