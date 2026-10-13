@@ -73,20 +73,22 @@ def load_tensorrt_model(
         comfyui_root=comfyui_root,
         search_plugin_artifacts=True,
     )
+    check_engine_version(path, getattr(trt, "__version__", "unknown"))
     runtime = trt.Runtime(get_trt_logger())
     with path.open("rb") as source:
         engine = runtime.deserialize_cuda_engine(source.read())
     if engine is None:
         raise RuntimeError(f"Failed to deserialize TensorRT engine: {path}")
-    check_engine_version(path, getattr(trt, "__version__", "unknown"))
-    if engine.num_io_tensors != 2:
+    names = [engine.get_tensor_name(index) for index in range(engine.num_io_tensors)]
+    inputs = [name for name in names if engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT]
+    outputs = [name for name in names if engine.get_tensor_mode(name) == trt.TensorIOMode.OUTPUT]
+    if len(inputs) != 1 or len(outputs) != 1:
         raise ValueError(
             "Expected one TensorRT input and one output, "
-            f"got {engine.num_io_tensors} tensors."
+            f"got {len(inputs)} inputs and {len(outputs)} outputs."
         )
 
-    input_name = engine.get_tensor_name(0)
-    output_name = engine.get_tensor_name(1)
+    input_name, output_name = inputs[0], outputs[0]
     dtype = engine.get_tensor_dtype(input_name)
     if dtype == trt.DataType.HALF:
         precision, torch_dtype = "fp16", torch.float16

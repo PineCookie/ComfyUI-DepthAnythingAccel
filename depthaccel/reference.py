@@ -97,7 +97,7 @@ def resolve_model_family(model_path: Path, model_family: str) -> str:
         raise ValueError(f"Unsupported model family: {model_family}")
     if model_family != "auto":
         return model_family
-    name = str(model_path).lower()
+    name = model_path.name.lower()
     return "dad" if "distill" in name or "dad" in name else "da2"
 
 

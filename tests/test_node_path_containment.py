@@ -6,11 +6,13 @@ never an arbitrary absolute path, a ``..`` traversal, or a file in the repo
 artifacts / cwd. See nodes._resolve_existing / _resolve_checkpoint.
 """
 
+import importlib
 import importlib.util
 from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -101,6 +103,23 @@ class FolderContainmentTests(unittest.TestCase):
         (self._tmp / "foo.pth").write_bytes(b"sd")
         with self.assertRaises(ValueError):
             self.nodes._resolve_existing("foo.pth", (".onnx",))
+
+    def test_known_model_in_secondary_folder_is_not_downloaded(self):
+        import folder_paths
+
+        # Make self._tmp the second folder, so a download would target another one.
+        first = Path(tempfile.mkdtemp(prefix="depthaccel_first_"))
+        folder_paths.add_model_folder_path("depthanything", str(first), is_default=True)
+        try:
+            name = "depth_anything_v2_vits.pth"
+            (self._tmp / name).write_bytes(b"sd")
+            download = importlib.import_module(PACKAGE_NAME + ".depthaccel.download")
+            with mock.patch.object(download, "download_model", side_effect=AssertionError("downloaded")):
+                path = self.nodes._resolve_checkpoint(name)
+            self.assertEqual(path, (self._tmp / name).resolve())
+        finally:
+            folder_paths.folder_names_and_paths["depthanything"][0].remove(str(first))
+            first.rmdir()
 
     def test_unknown_non_downloadable_name_is_rejected(self):
         with self.assertRaises(FileNotFoundError):

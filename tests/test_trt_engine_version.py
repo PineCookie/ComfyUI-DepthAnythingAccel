@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from depthaccel.tensorrt_backend import check_engine_version
+from depthaccel.tensorrt_backend import check_engine_version, load_tensorrt_model
 
 
 class EngineVersionTests(unittest.TestCase):
@@ -28,6 +28,16 @@ class EngineVersionTests(unittest.TestCase):
         engine = self._engine_and_sidecar("11.2.1.2")
         with self.assertRaisesRegex(RuntimeError, "11.2.1.2.*11.3.0.99"):
             check_engine_version(engine, "11.3.0.99")
+
+    def test_loader_reports_mismatch_before_deserializing(self):
+        try:
+            import tensorrt
+        except ImportError:
+            self.skipTest("tensorrt is not installed")
+        # A fake engine cannot deserialize, so only an early check names the version.
+        engine = self._engine_and_sidecar("0.0.0")
+        with self.assertRaisesRegex(RuntimeError, f"0.0.0.*{tensorrt.__version__}"):
+            load_tensorrt_model(engine)
 
 
 if __name__ == "__main__":

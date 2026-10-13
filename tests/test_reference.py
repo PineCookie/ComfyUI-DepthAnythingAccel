@@ -28,6 +28,8 @@ class ReferenceCheckpointTests(unittest.TestCase):
         self.assertEqual(resolve_model_family(Path("model.safetensors"), "dad"), "dad")
         self.assertEqual(resolve_model_family(Path("distill_any_depth_vits.safetensors"), "auto"), "dad")
         self.assertEqual(resolve_model_family(Path("depth_anything_v2_vits.pth"), "auto"), "da2")
+        # Parent folders must not affect detection.
+        self.assertEqual(resolve_model_family(Path("C:/Users/Soledad/distilled/depth_anything_v2_vits.pth"), "auto"), "da2")
 
     def test_normalizes_dad_large_backbone_prefix(self):
         tensor = torch.empty(384, 3, 14, 14)

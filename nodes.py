@@ -188,12 +188,15 @@ def _resolve_existing(name: str, suffixes: tuple[str, ...]) -> _Path:
 def _resolve_checkpoint(model: str) -> _Path:
     """Resolve a checkpoint dropdown value inside the model folder.
 
-    Known-but-missing models are auto-downloaded into ``models/depthanything``
-    first; anything else must already be a file inside that folder.
+    Known models missing from every registered folder are auto-downloaded into
+    ``models/depthanything`` first; anything else must already be a file
+    inside one of those folders.
     """
+    import folder_paths
+
     from .depthaccel.download import MODEL_SOURCES, download_model
 
-    if model in MODEL_SOURCES:
+    if model in MODEL_SOURCES and folder_paths.get_full_path(_MODEL_FOLDER, model) is None:
         path = download_model(model)
         return _require_in_folder(_Path(path), (".pth", ".safetensors"))
     return _resolve_existing(model, (".pth", ".safetensors"))
