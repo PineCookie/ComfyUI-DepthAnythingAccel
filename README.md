@@ -11,7 +11,7 @@ ComfyUI — one pipeline that runs the same model on **PyTorch, ONNX Runtime, or
   aligned to the 14-pixel patch grid and the depth map is resized back to the
   original image size afterwards.
 - **Three backends, one pipeline.** The same model can run on PyTorch
-  (reference), ONNX Runtime (CUDA), or TensorRT. Nodes are chained directly in
+  (reference), ONNX Runtime (CUDA or CPU), or TensorRT. Nodes are chained directly in
   the graph — `Load → Export to ONNX → (Fuse) → (Build TensorRT) → Estimate` —
   with progress printed to the console. No command line, no refresh.
 - **DA2 and DAD in one node set.** Distill-Any-Depth uses the same architecture
@@ -44,15 +44,28 @@ Search for `DepthAnythingAccel` in ComfyUI Manager and install it.
 ### Option 2: manual
 
 ```powershell
-git clone <repository-url> "$env:ComfyUI\custom_nodes\ComfyUI-DepthAnythingAccel"
-& "$env:ComfyUI\.venv\Scripts\python.exe" -m pip install safetensors onnxruntime-gpu
+git clone https://github.com/PineCookie/ComfyUI-DepthAnythingAccel "$env:ComfyUI\custom_nodes\ComfyUI-DepthAnythingAccel"
+& "$env:ComfyUI\.venv\Scripts\python.exe" -m pip install -r "$env:ComfyUI\custom_nodes\ComfyUI-DepthAnythingAccel\requirements.txt"
 ```
 
-> Install `onnx` and `tensorrt` only if you want to export ONNX models or build TensorRT engines.
+### Optional backends
 
-ComfyUI-Manager installs dependencies from `requirements.txt` automatically;
-the optional conversion/engine packages (`onnx`, `onnxslim`, `tensorrt`) are
-listed there commented out.
+The PyTorch nodes run on anything ComfyUI runs on and need nothing extra.
+ONNX Runtime and TensorRT are optional; install what fits your machine into
+ComfyUI's Python:
+
+| Machine | ONNX Runtime | TensorRT |
+| --- | --- | --- |
+| NVIDIA GPU | `onnxruntime-gpu` | `tensorrt-cu12` or `tensorrt-cu13`, matching `torch.version.cuda` |
+| Mac, AMD, Intel, CPU only | `onnxruntime` (runs on CPU) | not supported |
+
+- Install only one of `onnxruntime` / `onnxruntime-gpu`; they overwrite each
+  other. If another node pack installed `onnxruntime`, uninstall it before
+  installing `onnxruntime-gpu`.
+- `Export to ONNX` and `Fuse ONNX Attention` need `onnx` (`onnxslim` is
+  optional). Export is verified on CUDA and CPU.
+- FP16/BF16 precision in the PyTorch loader only takes effect on CUDA/ROCm;
+  elsewhere it runs in FP32.
 
 ## Download models
 

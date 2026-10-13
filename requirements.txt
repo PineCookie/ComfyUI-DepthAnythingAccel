@@ -4,12 +4,9 @@
 
 safetensors
 huggingface-hub
-onnxruntime-gpu
 
-# Optional (uncomment per use):
-# onnx
-# onnxslim
-# tensorrt
-#   TensorRT engines are tied to the exact TensorRT version (and GPU) that
-#   built them. Use the same version to build and run engines; after upgrading
-#   TensorRT, rebuild your engines.
+# Optional backends; install what fits your machine (see README):
+# onnxruntime-gpu                  ONNX Runtime on NVIDIA GPUs (uninstall onnxruntime first)
+# onnxruntime                      ONNX Runtime on CPU (Mac, AMD, Intel, no GPU)
+# onnx, onnxslim                   Export to ONNX / Fuse ONNX Attention
+# tensorrt-cu12 or tensorrt-cu13   TensorRT on NVIDIA GPUs; match torch.version.cuda

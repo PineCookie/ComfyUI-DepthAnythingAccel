@@ -68,6 +68,10 @@ def export_dynamic_onnx(
         raise ValueError("Export dimensions must be at least one 14-pixel patch.")
     if height % 14 or width % 14:
         raise ValueError("Export dimensions must be divisible by 14.")
+    try:
+        import onnx
+    except ImportError as error:
+        raise RuntimeError("Export to ONNX needs the onnx package: pip install onnx") from error
 
     output = Path(output_path)
     started = time.perf_counter()
@@ -128,8 +132,6 @@ def export_dynamic_onnx(
         f"{time.perf_counter() - started:.1f}s",
         flush=True,
     )
-
-    import onnx
 
     model = onnx.load(str(output), load_external_data=True)
     if not skip_simplify:

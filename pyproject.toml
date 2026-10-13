@@ -5,15 +5,10 @@ description = "Depth Anything V2 / Distill-Any-Depth depth estimation at native 
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
-dependencies = ["safetensors>=0.4"]
+dependencies = ["safetensors", "huggingface-hub"]
 classifiers = [
     "Operating System :: OS Independent",
 ]
-
-[project.optional-dependencies]
-export = ["onnx>=1.17", "onnxslim>=0.1"]
-runtime = ["onnxruntime-gpu>=1.18"]
-tensorrt = ["tensorrt"]
 
 [project.urls]
 Repository = "https://github.com/PineCookie/ComfyUI-DepthAnythingAccel"

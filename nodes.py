@@ -109,6 +109,15 @@ def _resolve_precision(precision: str) -> str:
     return "fp32"
 
 
+def _default_onnx_device() -> str:
+    """cuda when ONNX Runtime has its CUDA provider, else cpu (CPU-only onnxruntime)."""
+    try:
+        import onnxruntime as ort
+    except ImportError:
+        return "cuda"
+    return "cuda" if "CUDAExecutionProvider" in ort.get_available_providers() else "cpu"
+
+
 def _checkpoint_options() -> list[str]:
     """Existing checkpoints plus known auto-downloadable models.
 
@@ -297,7 +306,7 @@ class DepthAccelLoadOnnxModel(io.ComfyNode):
             category="DepthAnythingAccel/ONNX",
             description=(
                 "Loads a dynamic-shape DA2 ONNX model from "
-                "ComfyUI/models/depthanything with ONNX Runtime CUDA."
+                "ComfyUI/models/depthanything with ONNX Runtime."
             ),
             inputs=[
                 io.Combo.Input(
@@ -323,7 +332,7 @@ class DepthAccelLoadOnnxModel(io.ComfyNode):
                 io.Combo.Input(
                     "device",
                     options=["cuda", "cpu"],
-                    default="cuda",
+                    default=_default_onnx_device(),
                 ),
             ],
             outputs=[DepthAccelOnnxModelIO.Output("onnx_model")],
@@ -457,7 +466,7 @@ class DepthAccelExportOnnx(io.ComfyNode):
                 io.Combo.Input(
                     "device",
                     options=["cuda", "cpu"],
-                    default="cuda",
+                    default=_default_onnx_device(),
                 ),
                 io.Int.Input(
                     "height",
@@ -519,8 +528,7 @@ class DepthAccelExportOnnx(io.ComfyNode):
         except Exception as error:
             raise RuntimeError(
                 f"Exported {output}, but it could not be loaded as an ONNX "
-                f"model handle ({error}). Install onnxruntime-gpu to chain it "
-                "directly."
+                f"model handle: {error}"
             ) from error
         return io.NodeOutput(onnx_model)
 

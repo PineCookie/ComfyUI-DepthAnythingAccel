@@ -108,8 +108,8 @@ def load_onnx_model(
         import onnxruntime as ort
     except ImportError as error:
         raise RuntimeError(
-            "ONNX Runtime is not installed. Install the optional runtime "
-            "dependency with: uv pip install onnxruntime-gpu"
+            "ONNX Runtime is not installed. Install onnxruntime-gpu (NVIDIA) "
+            "or onnxruntime (CPU), not both."
         ) from error
 
     target = torch.device(device)
@@ -124,8 +124,9 @@ def load_onnx_model(
     if target.type == "cuda":
         if "CUDAExecutionProvider" not in available:
             raise RuntimeError(
-                "CUDAExecutionProvider is unavailable. "
-                f"Available providers: {available}"
+                "ONNX Runtime has no CUDA support (available providers: "
+                f"{available}). Select device=cpu, or replace onnxruntime "
+                "with onnxruntime-gpu on an NVIDIA GPU."
             )
         device_id = target.index or 0
         provider_options = {

@@ -59,7 +59,8 @@ def load_tensorrt_model(
         import tensorrt as trt
     except ImportError as error:
         raise RuntimeError(
-            "TensorRT is not installed. Install tensorrt to load TensorRT engines."
+            "TensorRT is not installed. Install tensorrt-cu12 or tensorrt-cu13 "
+            "to match torch.version.cuda."
         ) from error
     from .trt_logger import get_trt_logger
 

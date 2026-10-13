@@ -9,7 +9,7 @@
 
 - **原生分辨率**：输入不会被缩放成 518×518,只按 14 像素 patch 对齐;深度图最后
   会还原回原始图片尺寸。
-- **三种后端,一条流程**：同一模型可跑 PyTorch(参考)/ ONNX Runtime(CUDA)/ TensorRT。
+- **三种后端,一条流程**：同一模型可跑 PyTorch(参考)/ ONNX Runtime(CUDA 或 CPU)/ TensorRT。
   节点可在图内直接串联:`Load → Export to ONNX → (Fuse) → (Build TensorRT) → Estimate`,
   转换进度输出到控制台;无需命令行、无需刷新。
 - **DA2 与 DAD 用同一套节点**：Distill-Any-Depth 与 Depth Anything V2 架构一致,
@@ -39,14 +39,25 @@ TensorRT 约为 ONNX Runtime 的 2–2.7×,ONNX Runtime 约为 PyTorch 的 1.4×
 ### 方式二：手动安装
 
 ```powershell
-git clone <repository-url> "$env:ComfyUI\custom_nodes\ComfyUI-DepthAnythingAccel"
-& "$env:ComfyUI\.venv\Scripts\python.exe" -m pip install safetensors onnxruntime-gpu
+git clone https://github.com/PineCookie/ComfyUI-DepthAnythingAccel "$env:ComfyUI\custom_nodes\ComfyUI-DepthAnythingAccel"
+& "$env:ComfyUI\.venv\Scripts\python.exe" -m pip install -r "$env:ComfyUI\custom_nodes\ComfyUI-DepthAnythingAccel\requirements.txt"
 ```
 
-> 只有当你需要「导出 ONNX / 构建 TensorRT」时，才需要额外安装 `onnx` 和 `tensorrt`。
->
-> ComfyUI-Manager 安装插件时会自动执行 `requirements.txt`；可选的转换/引擎依赖
-> （`onnx`、`onnxslim`、`tensorrt`）在其中以注释形式列出。
+### 可选后端
+
+PyTorch 节点在任何能运行 ComfyUI 的机器上都可用，无需额外依赖。ONNX Runtime
+与 TensorRT 为可选项，请按你的机器安装到 ComfyUI 所用的 Python 中：
+
+| 机器 | ONNX Runtime | TensorRT |
+| --- | --- | --- |
+| NVIDIA 显卡 | `onnxruntime-gpu` | `tensorrt-cu12` 或 `tensorrt-cu13`，与 `torch.version.cuda` 一致 |
+| Mac、AMD、Intel、纯 CPU | `onnxruntime`（在 CPU 上运行） | 不支持 |
+
+- `onnxruntime` 与 `onnxruntime-gpu` 只能装一个，二者会互相覆盖。若其他节点包已安装
+  `onnxruntime`，请先卸载它再安装 `onnxruntime-gpu`。
+- `Export to ONNX` 与 `Fuse ONNX Attention` 需要 `onnx`（`onnxslim` 可选）。导出已在
+  CUDA 与 CPU 上验证。
+- PyTorch 加载器的 FP16/BF16 精度仅在 CUDA/ROCm 上生效，其他设备按 FP32 运行。
 
 ## 下载模型
 
