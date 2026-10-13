@@ -1,6 +1,7 @@
 """Export the local DA2 PyTorch reference to a dynamic-shape ONNX model."""
 
 import argparse
+import copy
 from pathlib import Path
 import sys
 import time
@@ -92,7 +93,11 @@ def export_dynamic_onnx(
             flush=True,
         )
     export_dtype = torch.float16 if precision == "fp16" else torch.float32
-    reference.model.to(dtype=export_dtype)
+    model = reference.model
+    if next(model.parameters()).dtype != export_dtype:
+        # Convert a copy: the reference may be a cached Load node output that
+        # other nodes still run in its native dtype.
+        model = copy.deepcopy(model).to(dtype=export_dtype)
     dummy = torch.randn(
         1, 3, height, width, device=reference.device, dtype=export_dtype
     )
@@ -103,7 +108,7 @@ def export_dynamic_onnx(
         flush=True,
     )
     torch.onnx.export(
-        reference.model,
+        model,
         (dummy,),
         str(output),
         export_params=True,
