@@ -117,7 +117,7 @@ class DinoVisionTransformer(nn.Module):
         if drop_path_uniform is True:
             dpr = [drop_path_rate] * depth
         else:
-            dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+            dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth, device="cpu")]  # stochastic depth decay rule
 
         if ffn_layer == "mlp":
             logger.info("using MLP layer as FFN")
@@ -179,7 +179,7 @@ class DinoVisionTransformer(nn.Module):
 
     def interpolate_pos_encoding(self, x, w, h):
         previous_dtype = x.dtype
-        N = int(self.pos_embed.shape[1]) - 1
+        N = self.patch_embed.num_patches
         pos_embed = self.pos_embed.float()
         class_pos_embed = pos_embed[:, 0]
         patch_pos_embed = pos_embed[:, 1:]

@@ -1,7 +1,6 @@
 """Export the local DA2 PyTorch reference to a dynamic-shape ONNX model."""
 
 import argparse
-import copy
 from pathlib import Path
 import sys
 import time
@@ -16,14 +15,16 @@ try:
     # Imported as part of the DepthAccel package (ComfyUI node runtime): use
     # package-relative imports so the plugin does not depend on its folder
     # being on sys.path.
-    from ..depthaccel.reference import load_reference_model
+    from ..depthaccel.models.da2 import DepthAnythingV2
+    from ..depthaccel.reference import MODEL_CONFIGS, load_reference_model
 except ImportError:
     # Run directly as a CLI script (python tools/export_onnx.py), where there
     # is no enclosing package: bootstrap the plugin folder onto sys.path and
     # import depthaccel as a top-level package.
     if str(REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(REPO_ROOT))
-    from depthaccel.reference import load_reference_model
+    from depthaccel.models.da2 import DepthAnythingV2
+    from depthaccel.reference import MODEL_CONFIGS, load_reference_model
 
 
 def parse_args() -> argparse.Namespace:
@@ -99,9 +100,17 @@ def export_dynamic_onnx(
     export_dtype = torch.float16 if precision == "fp16" else torch.float32
     model = reference.model
     if next(model.parameters()).dtype != export_dtype:
-        # Convert a copy: the reference may be a cached Load node output that
-        # other nodes still run in its native dtype.
-        model = copy.deepcopy(model).to(dtype=export_dtype)
+        # Export a converted copy: the reference may be a cached Load node
+        # output that other nodes still run in its native dtype. Rebuild from
+        # the weights rather than deepcopy, which would duplicate state
+        # ComfyUI's model patcher attaches to the module (native buffers).
+        with torch.device("meta"):
+            converted = DepthAnythingV2(**MODEL_CONFIGS[reference.encoder])
+        converted.load_state_dict(
+            {key: value.to(export_dtype) for key, value in model.state_dict().items()},
+            assign=True,
+        )
+        model = converted.eval()
     dummy = torch.randn(
         1, 3, height, width, device=reference.device, dtype=export_dtype
     )
