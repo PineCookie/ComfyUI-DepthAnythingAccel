@@ -5,15 +5,18 @@ ComfyUI — one pipeline that runs the same model on **PyTorch, ONNX Runtime, or
 
 中文文档见 [README_zh.md](README_zh.md)。
 
-## What it does
+## Why this pack
 
-- **Keeps fine detail.** Images are not shrunk to 518×518 first: the model
-  sees your image at (almost exactly) its own resolution, and the depth map
-  comes back at the original size.
-- **Gets faster without leaving ComfyUI.** Convert the model to ONNX Runtime
-  or TensorRT with nodes inside your workflow — no command line, no restart.
-- **DA2 and Distill-Any-Depth in one node set.** Both use the same
-  architecture; the model size and family are detected from the checkpoint.
+- **Full-resolution depth.** Depth nodes usually run the model at about
+  500 px by default and upscale the result. This pack runs it at your image's
+  own resolution, so the depth map keeps the detail of large images.
+- **Faster.** TensorRT runs 2.7–3.9× faster than PyTorch (table below), and
+  you convert the model with nodes inside your workflow — no command line, no
+  restart.
+- **DA2 and Distill-Any-Depth in one node set.** Model size and family are
+  detected from the checkpoint.
+- **Shares VRAM with your other models.** ComfyUI loads and frees the PyTorch
+  model like its own models.
 - **Auto-download.** Pick a supported model in the Load node and it is
   downloaded on first use.
 
