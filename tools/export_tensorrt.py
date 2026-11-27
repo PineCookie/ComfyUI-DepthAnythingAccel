@@ -131,7 +131,10 @@ def build_engine(
 
     if timing_cache is not None:
         cache_data = timing_cache.read_bytes() if timing_cache.is_file() else b""
-        config.set_timing_cache(config.create_timing_cache(cache_data), True)
+        cache = config.create_timing_cache(cache_data)
+        if cache is None and cache_data:
+            cache = config.create_timing_cache(b"")
+        config.set_timing_cache(cache, True)
 
     input_tensor = network.get_input(0)
     if (

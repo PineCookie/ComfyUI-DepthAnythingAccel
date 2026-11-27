@@ -5,10 +5,13 @@ import torch
 from pathlib import Path
 
 from depthaccel.reference import (
+    MODEL_CONFIGS,
     ReferenceDepthModel,
     detect_checkpoint_encoder,
+    estimate_depth,
     infer_reference_raw,
     load_checkpoint_state_dict,
+    load_reference_model,
     normalize_checkpoint_state_dict,
     resolve_model_family,
 )
@@ -92,6 +95,38 @@ class ReferenceCheckpointTests(unittest.TestCase):
         self.assertEqual(observed_grad_enabled, [False, False])
         self.assertFalse(out.requires_grad)
         self.assertEqual(tuple(out.shape), (2, 14, 14))
+
+    def test_load_reference_model_materializes_fp16_checkpoint_from_meta_to_fp32(self):
+        from tempfile import TemporaryDirectory
+
+        from safetensors.torch import save_file
+
+        from depthaccel.models.da2 import DepthAnythingV2
+
+        source = DepthAnythingV2(**MODEL_CONFIGS["vits"]).eval()
+        fp16_state = {
+            key: (value.half() if value.is_floating_point() else value)
+            for key, value in source.state_dict().items()
+        }
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "depth_anything_v2_vits_fp16.safetensors"
+            save_file(fp16_state, str(path))
+            loaded = load_reference_model(
+                str(path),
+                encoder="auto",
+                precision="fp32",
+                device=torch.device("cpu"),
+            )
+
+        self.assertEqual(loaded.encoder, "vits")
+        self.assertTrue(
+            all(
+                param.device.type == "cpu" and param.dtype == torch.float32
+                for param in loaded.model.parameters()
+            )
+        )
+        out = estimate_depth(loaded, torch.zeros(1, 14, 14, 3))
+        self.assertEqual(tuple(out.shape), (1, 14, 14, 3))
 
 
 if __name__ == "__main__":

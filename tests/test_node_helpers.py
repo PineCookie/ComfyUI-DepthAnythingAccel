@@ -147,6 +147,36 @@ class NodeHelperTests(unittest.TestCase):
                 self.assertEqual(self.nodes._relative_model_subdir(nested), Path("dad"))
                 self.assertEqual(self.nodes._relative_model_subdir(root / "flat.onnx"), Path("."))
 
+    def test_build_tensorrt_node_passes_persistent_timing_cache(self):
+        import importlib
+        import tempfile
+        from types import SimpleNamespace
+
+        try:
+            export_trt = importlib.import_module(PACKAGE_NAME + ".tools.export_tensorrt")
+        except ImportError:
+            self.skipTest("tensorrt is not installed")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            onnx_file = root / "da2_vits_fp16_dynamic.onnx"
+            onnx_file.write_bytes(b"onnx")
+            fake_handle = SimpleNamespace(model_path=onnx_file, metadata={})
+            with (
+                mock.patch("folder_paths.get_folder_paths", return_value=[str(root)]),
+                mock.patch.object(self.nodes, "_free_cuda_vram"),
+                mock.patch.object(export_trt, "build_engine") as build_mock,
+                mock.patch.object(self.nodes, "load_tensorrt_model", return_value="trt_handle"),
+            ):
+                result = self.nodes.DepthAccelBuildTensorrtEngine.execute(
+                    fake_handle, 14, 14, 560, 784, 2016, 2016, 4
+                )
+
+            self.assertEqual(result.args, ("trt_handle",))
+            build_mock.assert_called_once()
+            _, kwargs = build_mock.call_args
+            self.assertEqual(kwargs["timing_cache"], root / ".trt_timing.cache")
+
 
 if __name__ == "__main__":
     unittest.main()

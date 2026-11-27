@@ -685,11 +685,13 @@ class DepthAccelBuildTensorrtEngine(io.ComfyNode):
             )
 
         source = _Path(onnx_model.model_path)
+        model_root = _Path(_model_folder_dir())
         output = (
-            _Path(_model_folder_dir())
+            model_root
             / _relative_model_subdir(source)
             / f"{source.stem}.trt"
         )
+        timing_cache = model_root / ".trt_timing.cache"
         # Free PyTorch models and CUDA cache before TensorRT allocates its
         # build workspace outside PyTorch's caching allocator.
         _free_cuda_vram((workspace_gb + 1) << 30)
@@ -700,6 +702,7 @@ class DepthAccelBuildTensorrtEngine(io.ComfyNode):
             opt_hw=(opt_h, opt_w),
             max_hw=(max_h, max_w),
             workspace_gb=workspace_gb,
+            timing_cache=timing_cache,
         )
         engine_model = load_tensorrt_model(str(output), device=_cuda_device_arg())
         return io.NodeOutput(engine_model)

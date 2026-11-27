@@ -142,8 +142,19 @@ def load_reference_model(
             f"Select encoder={detected_encoder!r}."
         )
 
-    model = DepthAnythingV2(**MODEL_CONFIGS[encoder])
-    missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+    load_tensors = {
+        key: (
+            value.float()
+            if value.is_floating_point() and value.dtype != torch.float32
+            else value
+        )
+        for key, value in state_dict.items()
+    }
+    with torch.device("meta"):
+        model = DepthAnythingV2(**MODEL_CONFIGS[encoder])
+    missing_keys, unexpected_keys = model.load_state_dict(
+        load_tensors, strict=False, assign=True
+    )
     if missing_keys or unexpected_keys:
         raise RuntimeError(
             "DA2 checkpoint does not match the reference architecture: "
