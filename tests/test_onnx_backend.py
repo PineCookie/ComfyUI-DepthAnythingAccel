@@ -10,6 +10,7 @@ from depthaccel.onnx_backend import (
     _validate_model_contract,
     create_deferred_onnx_model,
     estimate_depth_onnx,
+    infer_onnx_raw,
 )
 from depthaccel.preprocessing import prepare_image
 
@@ -144,6 +145,31 @@ class OnnxBackendTests(unittest.TestCase):
         self.assertEqual(seen_batches, [1, 1, 1])
         self.assertEqual(tuple(out.shape), (3, 15, 17, 3))
         self.assertEqual(out.device.type, "cpu")
+
+    def test_deferred_handle_loads_and_caches_session_once(self):
+        import numpy as np
+
+        class FakeSession:
+            def run(self, outputs, feeds):
+                arr = next(iter(feeds.values()))
+                return [np.zeros((arr.shape[0], arr.shape[2], arr.shape[3]), dtype=np.float32)]
+
+        handle = create_deferred_onnx_model("model.onnx", device="cpu", precision="fp32")
+        loaded = create_deferred_onnx_model("model.onnx", device="cpu", precision="fp32")
+        loaded.session = FakeSession()
+        loaded.input_name = "image"
+        loaded.output_name = "depth"
+        loaded.providers = ("CPUExecutionProvider",)
+
+        prepared = torch.zeros(1, 3, 14, 14)
+        with mock.patch("depthaccel.onnx_backend.load_onnx_model", return_value=loaded) as load_mock:
+            out1 = infer_onnx_raw(handle, prepared)
+            out2 = infer_onnx_raw(handle, prepared)
+
+        load_mock.assert_called_once()
+        self.assertIs(handle.session, loaded.session)
+        self.assertEqual(tuple(out1.shape), (1, 14, 14))
+        self.assertEqual(tuple(out2.shape), (1, 14, 14))
 
 
 if __name__ == "__main__":

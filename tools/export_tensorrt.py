@@ -41,6 +41,36 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def validate_profile_bounds(
+    min_hw: tuple[int, int],
+    opt_hw: tuple[int, int],
+    max_hw: tuple[int, int],
+    workspace_gb: int = 4,
+) -> None:
+    """Validate TensorRT optimization profile bounds and workspace size."""
+    for label, value in (("min", min_hw), ("opt", opt_hw), ("max", max_hw)):
+        if len(value) != 2:
+            raise ValueError(f"{label} shape must be a (height, width) pair, got {value}.")
+        if value[0] < 14 or value[1] < 14:
+            raise ValueError(f"{label} height/width must be at least 14, got {value}.")
+        if value[0] % 14 or value[1] % 14:
+            raise ValueError(f"{label} height/width must be divisible by 14, got {value}.")
+    if not (min_hw[0] <= opt_hw[0] <= max_hw[0] and min_hw[1] <= opt_hw[1] <= max_hw[1]):
+        raise ValueError(
+            "TensorRT profile needs min <= opt <= max for each side, got "
+            f"min={min_hw[0]}x{min_hw[1]}, opt={opt_hw[0]}x{opt_hw[1]}, max={max_hw[0]}x{max_hw[1]}."
+        )
+    if workspace_gb < 1:
+        raise ValueError(f"workspace_gb must be at least 1, got {workspace_gb}.")
+
+
+def _network_creation_flags(trt_module) -> tuple[int, bool]:
+    """Return ``(flags, strongly_typed)`` compatible with TensorRT 10.x and 11.x."""
+    if hasattr(trt_module.NetworkDefinitionCreationFlag, "STRONGLY_TYPED"):
+        return 1 << int(trt_module.NetworkDefinitionCreationFlag.STRONGLY_TYPED), True
+    return 0, False
+
+
 def build_engine(
     onnx_path: Path,
     engine_path: Path,
@@ -52,6 +82,7 @@ def build_engine(
     timing_cache: Path | None = None,
     verbose: bool = False,
 ) -> None:
+    validate_profile_bounds(min_hw, opt_hw, max_hw, workspace_gb=workspace_gb)
     if not onnx_path.is_file():
         raise FileNotFoundError(onnx_path)
 
@@ -59,14 +90,18 @@ def build_engine(
     print(f"[DepthAnythingAccel] TensorRT: parsing ONNX graph {onnx_path.name}...", flush=True)
     logger = get_trt_logger(verbose)
     builder = trt.Builder(logger)
-    network = builder.create_network(0)
+    network_flags, strongly_typed = _network_creation_flags(trt)
+    network = builder.create_network(network_flags)
     parser = trt.OnnxParser(network, logger)
-    with onnx_path.open("rb") as source:
-        if not parser.parse(source.read()):
-            errors = "\n".join(
-                parser.get_error(i) for i in range(parser.num_errors)
-            )
-            raise RuntimeError(f"ONNX parse failed for {onnx_path}:\n{errors}")
+    if not parser.parse_from_file(str(onnx_path)):
+        errors = "\n".join(
+            str(parser.get_error(i)) for i in range(parser.num_errors)
+        )
+        raise RuntimeError(f"ONNX parse failed for {onnx_path}:\n{errors}")
+    if network.num_inputs != 1:
+        raise ValueError(
+            f"Expected one ONNX input for TensorRT build, got {network.num_inputs}."
+        )
     print(
         f"[DepthAnythingAccel] TensorRT: graph parsed in {time.perf_counter() - started:.1f}s",
         flush=True,
@@ -80,6 +115,12 @@ def build_engine(
         config.set_timing_cache(config.create_timing_cache(cache_data), True)
 
     input_tensor = network.get_input(0)
+    if (
+        not strongly_typed
+        and input_tensor.dtype == trt.DataType.HALF
+        and hasattr(trt.BuilderFlag, "FP16")
+    ):
+        config.set_flag(trt.BuilderFlag.FP16)
     profile = builder.create_optimization_profile()
     profile.set_shape(
         input_tensor.name,
@@ -126,9 +167,12 @@ def build_engine(
 
 def main() -> None:
     args = parse_args()
-    for label, value in (("min", args.min_hw), ("opt", args.opt_hw), ("max", args.max_hw)):
-        if value[0] % 14 or value[1] % 14:
-            raise ValueError(f"--{label}-hw must be divisible by 14, got {value}.")
+    validate_profile_bounds(
+        tuple(args.min_hw),
+        tuple(args.opt_hw),
+        tuple(args.max_hw),
+        workspace_gb=args.workspace_gb,
+    )
     build_engine(
         args.input,
         args.output,

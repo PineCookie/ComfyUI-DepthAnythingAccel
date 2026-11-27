@@ -228,8 +228,8 @@ class DepthAccelLoadReferenceModel(io.ComfyNode):
                     default="auto",
                     tooltip=(
                         "auto uses FP16 autocast on CUDA and FP32 elsewhere; "
-                        "the loaded checkpoint is always kept in its native "
-                        "dtype."
+                        "model weights are loaded in FP32 and autocast runs on "
+                        "CUDA."
                     ),
                 ),
             ],

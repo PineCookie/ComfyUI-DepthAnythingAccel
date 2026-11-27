@@ -183,7 +183,7 @@ def infer_reference_raw(
         dtype = torch.float16 if reference.precision == "fp16" else torch.bfloat16
         autocast = torch.autocast("cuda", dtype=dtype)
 
-    with autocast:
+    with torch.inference_mode(), autocast:
         for sample in prepared:
             depth = reference.model(sample.unsqueeze(0).to(reference.device))
             outputs.append(depth.detach().cpu())

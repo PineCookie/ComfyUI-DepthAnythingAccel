@@ -7,9 +7,11 @@ from unittest import mock
 import torch
 
 from depthaccel.tensorrt_backend import (
+    TensorrtDepthModel,
     _resolve_cuda_device,
     _validate_engine_contract,
     estimate_depth_tensorrt,
+    infer_tensorrt_raw,
 )
 
 
@@ -108,6 +110,54 @@ class TensorrtBackendTests(unittest.TestCase):
         self.assertEqual(seen_batches, [1, 1, 1])
         self.assertEqual(tuple(out.shape), (3, 15, 17, 3))
         self.assertEqual(out.device.type, "cpu")
+
+    def test_infer_tensorrt_raw_validates_bounds_before_gpu_transfer(self):
+        from pathlib import Path
+
+        model = TensorrtDepthModel(
+            engine=None,
+            input_name="image",
+            output_name="depth",
+            model_path=Path("fake.trt"),
+            device=torch.device("cuda", 0),
+            precision="fp16",
+            torch_dtype=torch.float16,
+            min_hw=(14, 14),
+            opt_hw=(560, 784),
+            max_hw=(1022, 1022),
+            stream=None,
+        )
+        oversized = torch.zeros(1, 3, 2016, 2016)
+        with (
+            mock.patch.object(torch.Tensor, "to", side_effect=AssertionError("should not copy to GPU")),
+            self.assertRaisesRegex(ValueError, "outside the engine profile"),
+        ):
+            infer_tensorrt_raw(model, oversized)
+
+    def test_export_tensorrt_profile_bounds_and_strongly_typed_flags(self):
+        try:
+            from tools.export_tensorrt import _network_creation_flags, validate_profile_bounds
+        except ImportError:
+            self.skipTest("tensorrt is not installed")
+
+        validate_profile_bounds((14, 14), (560, 784), (2016, 2016), workspace_gb=4)
+
+        with self.assertRaisesRegex(ValueError, "min <= opt <= max"):
+            validate_profile_bounds((560, 14), (280, 784), (2016, 2016))
+        with self.assertRaisesRegex(ValueError, "at least 14"):
+            validate_profile_bounds((0, 14), (560, 784), (2016, 2016))
+        with self.assertRaisesRegex(ValueError, "divisible by 14"):
+            validate_profile_bounds((14, 14), (561, 784), (2016, 2016))
+        with self.assertRaisesRegex(ValueError, "workspace_gb"):
+            validate_profile_bounds((14, 14), (560, 784), (2016, 2016), workspace_gb=0)
+
+        fake_trt_modern = SimpleNamespace(
+            NetworkDefinitionCreationFlag=SimpleNamespace(STRONGLY_TYPED=0)
+        )
+        self.assertEqual(_network_creation_flags(fake_trt_modern), (1, True))
+
+        fake_trt_legacy = SimpleNamespace(NetworkDefinitionCreationFlag=SimpleNamespace())
+        self.assertEqual(_network_creation_flags(fake_trt_legacy), (0, False))
 
 
 if __name__ == "__main__":

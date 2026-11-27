@@ -27,6 +27,27 @@ except ImportError:
     from depthaccel.reference import MODEL_CONFIGS, load_reference_model
 
 
+# Leave headroom under protobuf's 2 GiB serialization limit before switching
+# to external tensor data (relevant for vitg FP32).
+_EXTERNAL_DATA_THRESHOLD_BYTES = (2 << 30) - (64 << 20)
+
+
+def _save_and_check_onnx(onnx_module, model, output: Path) -> None:
+    """Validate and save an ONNX model, spilling to external data above 2 GiB."""
+    if model.ByteSize() >= _EXTERNAL_DATA_THRESHOLD_BYTES:
+        onnx_module.save_model(
+            model,
+            str(output),
+            save_as_external_data=True,
+            all_tensors_to_one_file=True,
+            location=f"{output.name}.data",
+        )
+        onnx_module.checker.check_model(str(output))
+    else:
+        onnx_module.checker.check_model(model)
+        onnx_module.save(model, str(output))
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
@@ -99,7 +120,9 @@ def export_dynamic_onnx(
         )
     export_dtype = torch.float16 if precision == "fp16" else torch.float32
     model = reference.model
-    if next(model.parameters()).dtype != export_dtype:
+    model_param = next(model.parameters())
+    model_device = model_param.device
+    if model_param.dtype != export_dtype:
         # Export a converted copy: the reference may be a cached Load node
         # output that other nodes still run in its native dtype. Rebuild from
         # the weights rather than deepcopy, which would duplicate state
@@ -107,12 +130,15 @@ def export_dynamic_onnx(
         with torch.device("meta"):
             converted = DepthAnythingV2(**MODEL_CONFIGS[reference.encoder])
         converted.load_state_dict(
-            {key: value.to(export_dtype) for key, value in model.state_dict().items()},
+            {
+                key: (value.to(export_dtype) if value.is_floating_point() else value)
+                for key, value in model.state_dict().items()
+            },
             assign=True,
         )
         model = converted.eval()
     dummy = torch.randn(
-        1, 3, height, width, device=reference.device, dtype=export_dtype
+        1, 3, height, width, device=model_device, dtype=export_dtype
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     print(
@@ -157,7 +183,7 @@ def export_dynamic_onnx(
         "depthaccel.architecture": (
             "distill-any-depth" if reference.model_family == "dad" else "depth-anything-v2"
         ),
-        "depthaccel.encoder": encoder,
+        "depthaccel.encoder": reference.encoder,
         "depthaccel.patch_size": "14",
         "depthaccel.precision": precision,
         "depthaccel.source_commit": "Depth-Anything-V2@a561b849ebae10a6f5ef49e26c83cbbcd36c71bf",
@@ -168,8 +194,7 @@ def export_dynamic_onnx(
         entry.key = key
         entry.value = value
     print("[DepthAnythingAccel] ONNX: validating graph and saving...", flush=True)
-    onnx.checker.check_model(model)
-    onnx.save(model, str(output))
+    _save_and_check_onnx(onnx, model, output)
     print(
         f"Exported: {output.resolve()} "
         f"(total {time.perf_counter() - started:.1f}s)",

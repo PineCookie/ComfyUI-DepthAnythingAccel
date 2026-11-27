@@ -5,7 +5,9 @@ import torch
 from pathlib import Path
 
 from depthaccel.reference import (
+    ReferenceDepthModel,
     detect_checkpoint_encoder,
+    infer_reference_raw,
     load_checkpoint_state_dict,
     normalize_checkpoint_state_dict,
     resolve_model_family,
@@ -67,6 +69,29 @@ class ReferenceCheckpointTests(unittest.TestCase):
         self.assertIn("pretrained.patch_embed.proj.weight", loaded)
         self.assertIn("depth_head.projects.0.weight", loaded)
         self.assertNotIn("backbone.patch_embed.proj.weight", loaded)
+
+    def test_infer_reference_raw_disables_autograd(self):
+        observed_grad_enabled = []
+
+        class RecordingModel(torch.nn.Module):
+            def forward(self, x):
+                observed_grad_enabled.append(torch.is_grad_enabled())
+                return x[:, 0]
+
+        reference = ReferenceDepthModel(
+            model=RecordingModel(),
+            device=torch.device("cpu"),
+            precision="fp32",
+            model_path=Path("model.safetensors"),
+            encoder="vits",
+            model_family="da2",
+        )
+        prepared = torch.zeros(2, 3, 14, 14, requires_grad=True)
+        out = infer_reference_raw(reference, prepared)
+
+        self.assertEqual(observed_grad_enabled, [False, False])
+        self.assertFalse(out.requires_grad)
+        self.assertEqual(tuple(out.shape), (2, 14, 14))
 
 
 if __name__ == "__main__":

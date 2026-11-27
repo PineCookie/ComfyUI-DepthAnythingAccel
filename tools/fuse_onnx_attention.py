@@ -303,9 +303,19 @@ def fuse_attention_model(
         f"({time.perf_counter() - started:.1f}s so far)...",
         flush=True,
     )
-    onnx.checker.check_model(model)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    onnx.save(model, str(output_path))
+    if model.ByteSize() >= (2 << 30) - (64 << 20):
+        onnx.save_model(
+            model,
+            str(output_path),
+            save_as_external_data=True,
+            all_tensors_to_one_file=True,
+            location=f"{output_path.name}.data",
+        )
+        onnx.checker.check_model(str(output_path))
+    else:
+        onnx.checker.check_model(model)
+        onnx.save(model, str(output_path))
 
     print(f"Input: {input_path.resolve()}")
     print(f"Output: {output_path.resolve()}")
