@@ -1,8 +1,10 @@
 """Export the local DA2 PyTorch reference to a dynamic-shape ONNX model."""
 
 import argparse
+import os
 from pathlib import Path
 import sys
+import tempfile
 import time
 
 import torch
@@ -33,19 +35,27 @@ _EXTERNAL_DATA_THRESHOLD_BYTES = (2 << 30) - (64 << 20)
 
 
 def _save_and_check_onnx(onnx_module, model, output: Path) -> None:
-    """Validate and save an ONNX model, spilling to external data above 2 GiB."""
-    if model.ByteSize() >= _EXTERNAL_DATA_THRESHOLD_BYTES:
-        onnx_module.save_model(
-            model,
-            str(output),
-            save_as_external_data=True,
-            all_tensors_to_one_file=True,
-            location=f"{output.name}.data",
-        )
-        onnx_module.checker.check_model(str(output))
-    else:
-        onnx_module.checker.check_model(model)
-        onnx_module.save(model, str(output))
+    """Validate and atomically save an ONNX model, spilling to external data above 2 GiB."""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=output.parent, prefix=".depthaccel_onnx_") as tmp_dir:
+        tmp_root = Path(tmp_dir)
+        staged = tmp_root / output.name
+        if model.ByteSize() >= _EXTERNAL_DATA_THRESHOLD_BYTES:
+            data_name = f"{output.name}.data"
+            onnx_module.save_model(
+                model,
+                str(staged),
+                save_as_external_data=True,
+                all_tensors_to_one_file=True,
+                location=data_name,
+            )
+            onnx_module.checker.check_model(str(staged))
+            os.replace(tmp_root / data_name, output.with_name(data_name))
+            os.replace(staged, output)
+        else:
+            onnx_module.checker.check_model(model)
+            onnx_module.save(model, str(staged))
+            os.replace(staged, output)
 
 
 def parse_args() -> argparse.Namespace:
@@ -146,29 +156,30 @@ def export_dynamic_onnx(
         "(tracing + constant folding can take a while)...",
         flush=True,
     )
-    torch.onnx.export(
-        model,
-        (dummy,),
-        str(output),
-        export_params=True,
-        opset_version=opset,
-        do_constant_folding=True,
-        input_names=["image"],
-        output_names=["depth"],
-        dynamic_axes={
-            "image": {0: "batch", 2: "height", 3: "width"},
-            "depth": {0: "batch", 1: "height", 2: "width"},
-        },
-        training=torch.onnx.TrainingMode.EVAL,
-        dynamo=False,
-    )
-    print(
-        f"[DepthAnythingAccel] ONNX: tracing finished in "
-        f"{time.perf_counter() - started:.1f}s",
-        flush=True,
-    )
-
-    model = onnx.load(str(output), load_external_data=True)
+    with tempfile.TemporaryDirectory(dir=output.parent, prefix=".depthaccel_trace_") as trace_dir:
+        traced_path = Path(trace_dir) / output.name
+        torch.onnx.export(
+            model,
+            (dummy,),
+            str(traced_path),
+            export_params=True,
+            opset_version=opset,
+            do_constant_folding=True,
+            input_names=["image"],
+            output_names=["depth"],
+            dynamic_axes={
+                "image": {0: "batch", 2: "height", 3: "width"},
+                "depth": {0: "batch", 1: "height", 2: "width"},
+            },
+            training=torch.onnx.TrainingMode.EVAL,
+            dynamo=False,
+        )
+        print(
+            f"[DepthAnythingAccel] ONNX: tracing finished in "
+            f"{time.perf_counter() - started:.1f}s",
+            flush=True,
+        )
+        model = onnx.load(str(traced_path), load_external_data=True)
     if not skip_simplify:
         try:
             import onnxslim

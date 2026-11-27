@@ -135,6 +135,18 @@ class NodeHelperTests(unittest.TestCase):
             free_mock.assert_not_called()
             cache_mock.assert_not_called()
 
+    def test_relative_model_subdir_preserves_nested_folder(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            nested = root / "dad" / "model.onnx"
+            nested.parent.mkdir(parents=True)
+            nested.write_bytes(b"onnx")
+            with mock.patch("folder_paths.get_folder_paths", return_value=[str(root)]):
+                self.assertEqual(self.nodes._relative_model_subdir(nested), Path("dad"))
+                self.assertEqual(self.nodes._relative_model_subdir(root / "flat.onnx"), Path("."))
+
 
 if __name__ == "__main__":
     unittest.main()

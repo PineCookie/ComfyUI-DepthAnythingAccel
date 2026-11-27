@@ -14,6 +14,7 @@ License notes mirror the conservative classification in THIRD_PARTY.md.
 import os
 from pathlib import Path
 import shutil
+import tempfile
 
 from .paths import default_model_dir
 
@@ -104,6 +105,16 @@ def download_model(
             + ", ".join(known_model_names())
         )
 
+    if dest_dir is None:
+        try:
+            import folder_paths
+
+            existing = folder_paths.get_full_path("depthanything", model_ref)
+            if existing and Path(existing).is_file():
+                return Path(existing).resolve()
+        except (ImportError, KeyError):
+            pass
+
     dest = dest_dir or default_model_dir(comfyui_root)
     target = dest / model_ref
     if target.is_file():
@@ -126,7 +137,13 @@ def download_model(
         hf_hub_download(repo_id=source["repo_id"], filename=source["filename"])
     )
     if not target.is_file():
-        staging = target.with_name(target.name + ".part")
+        fd, staging_name = tempfile.mkstemp(
+            dir=dest,
+            prefix=f".{target.name}.",
+            suffix=".part",
+        )
+        os.close(fd)
+        staging = Path(staging_name)
         try:
             shutil.copyfile(cached, staging)
             os.replace(staging, target)

@@ -73,6 +73,21 @@ class DownloadTests(unittest.TestCase):
             leftovers = [p.name for p in dest.iterdir() if p.name.endswith(".part")]
             self.assertEqual(leftovers, [])
 
+    def test_download_model_finds_existing_file_in_secondary_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            secondary = Path(tmp) / "extra"
+            secondary.mkdir()
+            existing = secondary / "depth_anything_v2_vits.pth"
+            existing.write_bytes(b"weights")
+            fake_fp = mock.MagicMock()
+            fake_fp.get_full_path.return_value = str(existing)
+            with mock.patch.dict(
+                sys.modules,
+                {"folder_paths": fake_fp, "huggingface_hub": None},
+            ):
+                path = download_model("depth_anything_v2_vits.pth")
+            self.assertEqual(path, existing.resolve())
+
 
 if __name__ == "__main__":
     unittest.main()

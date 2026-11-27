@@ -147,6 +147,17 @@ def _is_within_folder(path: _Path) -> bool:
     return False
 
 
+def _relative_model_subdir(source: _Path) -> _Path:
+    """Return ``source.parent`` relative to its registered depthanything root, else '.'."""
+    resolved_parent = source.resolve().parent
+    for folder in folder_paths.get_folder_paths(_MODEL_FOLDER):
+        try:
+            return resolved_parent.relative_to(_Path(folder).resolve())
+        except ValueError:
+            continue
+    return _Path(".")
+
+
 def _require_in_folder(path: _Path, suffixes: tuple[str, ...]) -> _Path:
     """Return ``path`` resolved, after asserting it is a real file, inside a
     registered depthanything folder, with an allowed extension."""
@@ -234,7 +245,6 @@ class DepthAccelLoadReferenceModel(io.ComfyNode):
                 ),
             ],
             outputs=[DepthAccelModelIO.Output("model")],
-            is_experimental=True,
         )
 
     @classmethod
@@ -274,7 +284,6 @@ class DepthAccelEstimateDepth(io.ComfyNode):
                 io.Image.Input("image"),
             ],
             outputs=[io.Image.Output("depth")],
-            is_experimental=True,
         )
 
     @classmethod
@@ -331,7 +340,6 @@ class DepthAccelLoadOnnxModel(io.ComfyNode):
                 ),
             ],
             outputs=[DepthAccelOnnxModelIO.Output("onnx_model")],
-            is_experimental=True,
         )
 
     @classmethod
@@ -364,7 +372,6 @@ class DepthAccelEstimateDepthOnnx(io.ComfyNode):
                 io.Image.Input("image"),
             ],
             outputs=[io.Image.Output("depth")],
-            is_experimental=True,
         )
 
     @classmethod
@@ -406,12 +413,14 @@ class DepthAccelLoadTensorrtModel(io.ComfyNode):
                         "da2_vitl_fp16_dynamic.trt",
                         "da2_vitb_fp16_dynamic.trt",
                         "da2_vits_fp16_dynamic.trt",
+                        "dad_vitl_fp16_dynamic.trt",
+                        "dad_vitb_fp16_dynamic.trt",
+                        "dad_vits_fp16_dynamic.trt",
                     ),
                     tooltip="TensorRT engine in ComfyUI/models/depthanything.",
                 ),
             ],
             outputs=[DepthAccelTensorrtModelIO.Output("trt_model")],
-            is_experimental=True,
         )
 
     @classmethod
@@ -442,7 +451,6 @@ class DepthAccelEstimateDepthTensorrt(io.ComfyNode):
                 io.Image.Input("image"),
             ],
             outputs=[io.Image.Output("depth")],
-            is_experimental=True,
         )
 
     @classmethod
@@ -510,7 +518,6 @@ class DepthAccelExportOnnx(io.ComfyNode):
                 ),
             ],
             outputs=[DepthAccelOnnxModelIO.Output("onnx_model")],
-            is_experimental=True,
             is_output_node=True,
         )
 
@@ -582,7 +589,6 @@ class DepthAccelFuseOnnxAttention(io.ComfyNode):
             ),
             inputs=[DepthAccelOnnxModelIO.Input("onnx_model")],
             outputs=[DepthAccelOnnxModelIO.Output("onnx_model")],
-            is_experimental=True,
             is_output_node=True,
         )
 
@@ -593,7 +599,11 @@ class DepthAccelFuseOnnxAttention(io.ComfyNode):
         if "depthaccel.attention" in onnx_model.metadata:
             raise ValueError("This ONNX model is already fused; feed Fuse ONNX Attention the unfused model.")
         source = _Path(onnx_model.model_path)
-        output = _Path(_model_folder_dir()) / f"{source.stem}_fused.onnx"
+        output = (
+            _Path(_model_folder_dir())
+            / _relative_model_subdir(source)
+            / f"{source.stem}_fused.onnx"
+        )
         fuse_attention_model(source, output)
         fused_metadata = dict(onnx_model.metadata)
         fused_metadata["depthaccel.attention"] = "com.microsoft::attention"
@@ -637,7 +647,6 @@ class DepthAccelBuildTensorrtEngine(io.ComfyNode):
                 ),
             ],
             outputs=[DepthAccelTensorrtModelIO.Output("trt_model")],
-            is_experimental=True,
             is_output_node=True,
         )
 
@@ -676,7 +685,11 @@ class DepthAccelBuildTensorrtEngine(io.ComfyNode):
             )
 
         source = _Path(onnx_model.model_path)
-        output = _Path(_model_folder_dir()) / f"{source.stem}.trt"
+        output = (
+            _Path(_model_folder_dir())
+            / _relative_model_subdir(source)
+            / f"{source.stem}.trt"
+        )
         # Free PyTorch models and CUDA cache before TensorRT allocates its
         # build workspace outside PyTorch's caching allocator.
         _free_cuda_vram((workspace_gb + 1) << 30)

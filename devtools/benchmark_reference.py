@@ -1,4 +1,4 @@
-"""Benchmark the local Kijai DA2 PyTorch implementation without ComfyUI."""
+"""Benchmark the local DepthAccel DA2/DAD PyTorch reference without ComfyUI."""
 
 import argparse
 import json

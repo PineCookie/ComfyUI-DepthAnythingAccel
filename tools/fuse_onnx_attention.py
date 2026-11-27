@@ -2,8 +2,10 @@
 
 import argparse
 from collections import Counter
+import os
 import re
 from pathlib import Path
+import tempfile
 import time
 
 import numpy as np
@@ -304,18 +306,25 @@ def fuse_attention_model(
         flush=True,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    if model.ByteSize() >= (2 << 30) - (64 << 20):
-        onnx.save_model(
-            model,
-            str(output_path),
-            save_as_external_data=True,
-            all_tensors_to_one_file=True,
-            location=f"{output_path.name}.data",
-        )
-        onnx.checker.check_model(str(output_path))
-    else:
-        onnx.checker.check_model(model)
-        onnx.save(model, str(output_path))
+    with tempfile.TemporaryDirectory(dir=output_path.parent, prefix=".depthaccel_fuse_") as tmp_dir:
+        tmp_root = Path(tmp_dir)
+        staged = tmp_root / output_path.name
+        if model.ByteSize() >= (2 << 30) - (64 << 20):
+            data_name = f"{output_path.name}.data"
+            onnx.save_model(
+                model,
+                str(staged),
+                save_as_external_data=True,
+                all_tensors_to_one_file=True,
+                location=data_name,
+            )
+            onnx.checker.check_model(str(staged))
+            os.replace(tmp_root / data_name, output_path.with_name(data_name))
+            os.replace(staged, output_path)
+        else:
+            onnx.checker.check_model(model)
+            onnx.save(model, str(staged))
+            os.replace(staged, output_path)
 
     print(f"Input: {input_path.resolve()}")
     print(f"Output: {output_path.resolve()}")

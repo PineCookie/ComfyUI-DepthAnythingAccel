@@ -54,24 +54,37 @@ class ExportOnnxTests(unittest.TestCase):
     def test_save_and_check_spills_external_data_above_2gib_threshold(self):
         from unittest import mock
 
+        def fake_save_model(model, path, *, location, **kwargs):
+            staged = Path(path)
+            staged.write_bytes(b"onnx-graph")
+            staged.with_name(location).write_bytes(b"external-weights")
+
         fake_onnx = SimpleNamespace(
-            save_model=mock.Mock(),
+            save_model=mock.Mock(side_effect=fake_save_model),
             save=mock.Mock(),
             checker=SimpleNamespace(check_model=mock.Mock()),
         )
         huge_model = SimpleNamespace(ByteSize=lambda: 2 << 30)
-        output = Path("vitg_fp32.onnx")
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "vitg_fp32.onnx"
+            _save_and_check_onnx(fake_onnx, huge_model, output)
 
-        _save_and_check_onnx(fake_onnx, huge_model, output)
+            self.assertEqual(output.read_bytes(), b"onnx-graph")
+            self.assertEqual(
+                output.with_name("vitg_fp32.onnx.data").read_bytes(),
+                b"external-weights",
+            )
+            self.assertEqual(
+                sorted(p.name for p in Path(tmp).iterdir()),
+                ["vitg_fp32.onnx", "vitg_fp32.onnx.data"],
+            )
 
-        fake_onnx.save_model.assert_called_once_with(
-            huge_model,
-            str(output),
-            save_as_external_data=True,
-            all_tensors_to_one_file=True,
-            location="vitg_fp32.onnx.data",
-        )
-        fake_onnx.checker.check_model.assert_called_once_with(str(output))
+        fake_onnx.save_model.assert_called_once()
+        _, kwargs = fake_onnx.save_model.call_args
+        self.assertTrue(kwargs["save_as_external_data"])
+        self.assertTrue(kwargs["all_tensors_to_one_file"])
+        self.assertEqual(kwargs["location"], "vitg_fp32.onnx.data")
+        fake_onnx.checker.check_model.assert_called_once()
         fake_onnx.save.assert_not_called()
 
 

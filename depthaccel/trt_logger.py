@@ -22,7 +22,7 @@ def get_trt_logger(verbose: bool = False) -> trt.Logger:
         _logger_verbose = verbose
     elif verbose != _logger_verbose:
         print(
-            "[DepthAccel] Requested TensorRT verbose logging, but the process "
+            "[DepthAnythingAccel] Requested TensorRT verbose logging, but the process "
             "logger is already active at a different severity; keeping the "
             "existing one.",
             flush=True,

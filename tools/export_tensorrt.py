@@ -9,8 +9,10 @@ graph for an FP16 engine, or from the FP32 graph for an FP32 engine.
 """
 
 import argparse
+import os
 from pathlib import Path
 import sys
+import tempfile
 import time
 
 import tensorrt as trt
@@ -39,6 +41,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timing-cache", type=Path, help="Persistent timing cache file to speed up repeated builds.")
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args()
+
+
+def _atomic_write_bytes(target: Path, data: bytes) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, staging_name = tempfile.mkstemp(
+        dir=target.parent,
+        prefix=f".{target.name}.",
+        suffix=".part",
+    )
+    os.close(fd)
+    staging = Path(staging_name)
+    try:
+        staging.write_bytes(data)
+        os.replace(staging, target)
+    finally:
+        if staging.exists():
+            staging.unlink(missing_ok=True)
 
 
 def validate_profile_bounds(
@@ -144,15 +163,16 @@ def build_engine(
         flush=True,
     )
 
-    engine_path.parent.mkdir(parents=True, exist_ok=True)
-    engine_path.write_bytes(bytes(serialized))
+    _atomic_write_bytes(engine_path, bytes(serialized))
     # Record the building TensorRT version so the loader can refuse a silent
     # engine/runtime version mismatch (see depthaccel/tensorrt_backend.py).
-    Path(str(engine_path) + ".version").write_text(trt.__version__, encoding="utf-8")
+    _atomic_write_bytes(
+        Path(str(engine_path) + ".version"),
+        trt.__version__.encode("utf-8"),
+    )
 
     if timing_cache is not None:
-        timing_cache.parent.mkdir(parents=True, exist_ok=True)
-        timing_cache.write_bytes(config.get_timing_cache().serialize())
+        _atomic_write_bytes(timing_cache, bytes(config.get_timing_cache().serialize()))
 
     print(f"Input:  {onnx_path.resolve()}")
     print(f"Output: {engine_path.resolve()}")

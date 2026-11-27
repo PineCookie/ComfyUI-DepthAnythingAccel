@@ -46,6 +46,17 @@ def load_engine(path: Path) -> trt.ICudaEngine:
     return engine
 
 
+def _engine_io_names(engine: trt.ICudaEngine) -> tuple[str, str]:
+    names = [engine.get_tensor_name(index) for index in range(engine.num_io_tensors)]
+    inputs = [name for name in names if engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT]
+    outputs = [name for name in names if engine.get_tensor_mode(name) == trt.TensorIOMode.OUTPUT]
+    if len(inputs) != 1 or len(outputs) != 1:
+        raise ValueError(
+            f"Expected one TensorRT input and one output, got {len(inputs)} and {len(outputs)}."
+        )
+    return inputs[0], outputs[0]
+
+
 def make_executor(
     engine: trt.ICudaEngine,
     prepared: torch.Tensor,
@@ -53,8 +64,7 @@ def make_executor(
 ) -> tuple[trt.IExecutionContext, torch.Tensor]:
     """Bind a dynamic-shape context to the prepared input and output buffers."""
     context = engine.create_execution_context()
-    input_name = engine.get_tensor_name(0)
-    output_name = engine.get_tensor_name(1)
+    input_name, output_name = _engine_io_names(engine)
 
     batch, channels, height, width = prepared.shape
     context.set_input_shape(input_name, (batch, channels, height, width))
@@ -99,15 +109,15 @@ def main() -> None:
 
     device = torch.device("cuda")
     engine = load_engine(args.engine)
-    input_tensor = engine.get_tensor_name(0)
+    input_tensor, _ = _engine_io_names(engine)
     fp16 = engine.get_tensor_dtype(input_tensor) == trt.DataType.HALF
 
-    image = resize_input(load_image(args.image), *SHAPES["portrait"])
+    source_image = load_image(args.image)
     stream = torch.cuda.Stream(device=device)
     rows = []
     for shape_name in args.shapes:
         height, width = SHAPES[shape_name]
-        resized = resize_input(image, height, width)
+        resized = resize_input(source_image, height, width)
         prepared, _ = prepare_image(resized)
         prepared = prepared.contiguous().to(device=device, dtype=torch.float16 if fp16 else torch.float32)
 

@@ -1,6 +1,7 @@
 """Tests for the TensorRT engine-version sidecar check."""
 
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
 
@@ -10,6 +11,7 @@ from depthaccel.tensorrt_backend import check_engine_version, load_tensorrt_mode
 class EngineVersionTests(unittest.TestCase):
     def _engine_and_sidecar(self, version: str | None):
         tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         engine = Path(tmp) / "da2_vits_fp16_dynamic.trt"
         engine.write_bytes(b"fake-engine")
         if version is not None:

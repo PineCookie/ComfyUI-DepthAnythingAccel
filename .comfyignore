@@ -6,13 +6,17 @@ tests/
 DEVELOPMENT.md
 
 # Local-only assets and notes (kept on disk, never published)
+PLANS.md
 artifacts/
 *.pth
 *.safetensors
 *.onnx
+*.onnx.data
 *.trt
 *.engine
 *.plan
+*.version
 __pycache__/
 *.py[cod]
 .vscode/
+.kilo/
