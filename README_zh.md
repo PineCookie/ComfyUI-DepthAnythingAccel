@@ -9,22 +9,24 @@
 
 - **全分辨率深度**：深度节点通常默认以约 500 px 运行模型再放大结果。本节点包按原图
   分辨率运行，大图的细节得以保留在深度图中。
-- **更快**：TensorRT 比 PyTorch 快 2.7–3.9×（见下表），且在工作流内用节点完成转换，
-  无需命令行、无需重启。
+- **更快**：PyTorch 后端开箱即用原生 FP16 与 GPU 预/后处理，TensorRT 可在此基础上再将推理
+  延迟几乎减半（约快 1.8–1.9×，如 Large 在 784×1176 下仅 46 ms），且在工作流内用节点
+  完成转换，无需命令行、无需重启。
 - **DA2 与 Distill-Any-Depth 共用一套节点**：模型大小与家族会从 checkpoint 自动识别。
 - **与其他模型共享显存**：ComfyUI 会像管理自带模型一样加载和释放 PyTorch 模型。
 - **自动下载**：在 Load 节点中选择受支持的模型，首次使用时自动下载。
 
-实测速度（RTX 5070 Ti，FP16，784×1176）：
+实测速度（RTX 5070 Ti，FP16，784×1176，热身 5 次后取 20 次纯 GPU 推理均值；PyTorch 2.15 + CUDA 13.2 / ORT 1.32 / TensorRT 11.5）：
 
 | Encoder | PyTorch | ONNX Runtime（融合） | TensorRT |
 | --- | ---: | ---: | ---: |
-| Small（`vits`） | 29.1 ms | 20.5 ms | 7.5 ms |
-| Base（`vitb`） | 51.0 ms | 37.4 ms | 16.5 ms |
-| Large（`vitl`） | 127.3 ms | 93.5 ms | 47.3 ms |
+| Small（`vits`） | 13.2 ms | 14.5 ms | 6.8 ms |
+| Base（`vitb`） | 29.8 ms | 30.4 ms | 15.6 ms |
+| Large（`vitl`） | 83.9 ms | 86.3 ms | 46.0 ms |
 
-TensorRT 约为融合 ONNX Runtime 的 2–2.7×，融合 ONNX Runtime 约为 PyTorch 的 1.4×。
-各后端输出与 FP32 参考高度一致（相关性 ≈ 1.0，归一化误差 ≈ 1e-3）。
+TensorRT 比 PyTorch 和融合 ONNX Runtime 快约 1.8–1.9×。端到端耗时（含 GPU 预/后处理及
+CPU↔GPU 拷贝）每张仅增加约 2–3 ms（例如 Large：PyTorch 86.9 ms、ONNX 88.4 ms、TensorRT
+48.3 ms）。各后端输出与 FP32 参考高度一致（相关性 ≈ 1.0，归一化误差 ≈ 1e-3）。
 
 ## 安装
 
@@ -58,15 +60,17 @@ Small，体积小且允许商用；其他模型见「模型」一节。
 文件保存在 `ComfyUI/models/depthanything/`，之后可用 `Load Depth Model (ONNX)` /
 `(TensorRT)` 节点直接加载，跳过转换。
 
-**ONNX Runtime（约 1.4× 加速）**
+**ONNX Runtime（跨平台 / CPU 与 CUDA）**
 
 ```text
 [Load Depth Model (PyTorch)] -> [Export to ONNX] -> [Fuse ONNX Attention] -> [Estimate Depth (ONNX)]
 ```
 
-加速主要来自 `Fuse ONNX Attention`。它是可选的；未融合的模型也能运行，只是更慢。
+ONNX 端的加速主要来自 `Fuse ONNX Attention`（可选；未融合图也能运行，只是更慢）。在现代
+PyTorch + CUDA 环境下，融合 ONNX 速度与 PyTorch 基本持平，主要适用于跨平台/CPU 部署或
+未安装 TensorRT 的环境。
 
-**TensorRT（在此基础上再快约 2–2.7×，仅限 NVIDIA）** —— 模板 *Depth estimation - TensorRT*
+**TensorRT（约快 1.8–1.9×，仅限 NVIDIA）** —— 模板 *Depth estimation - TensorRT*
 
 ```text
 [Load Depth Model (PyTorch)] -> [Export to ONNX] -> [Build TensorRT Engine] -> [Estimate Depth (TensorRT)]

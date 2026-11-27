@@ -10,9 +10,10 @@ ComfyUI — one pipeline that runs the same model on **PyTorch, ONNX Runtime, or
 - **Full-resolution depth.** Depth nodes usually run the model at about
   500 px by default and upscale the result. This pack runs it at your image's
   own resolution, so the depth map keeps the detail of large images.
-- **Faster.** TensorRT runs 2.7–3.9× faster than PyTorch (table below), and
-  you convert the model with nodes inside your workflow — no command line, no
-  restart.
+- **Faster.** Native FP16 + GPU pre/postprocessing makes the PyTorch backend
+  fast out of the box, and TensorRT cuts inference latency nearly in half again
+  (~1.8–1.9× faster, e.g. Large at 784×1176 in 46 ms). Convert models with nodes
+  inside your workflow — no command line, no restart.
 - **DA2 and Distill-Any-Depth in one node set.** Model size and family are
   detected from the checkpoint.
 - **Shares VRAM with your other models.** ComfyUI loads and frees the PyTorch
@@ -20,17 +21,20 @@ ComfyUI — one pipeline that runs the same model on **PyTorch, ONNX Runtime, or
 - **Auto-download.** Pick a supported model in the Load node and it is
   downloaded on first use.
 
-Measured on an RTX 5070 Ti (FP16, 784×1176):
+Measured on an RTX 5070 Ti (FP16, 784×1176, inference-only GPU mean over 20
+warm runs on PyTorch 2.15 + CUDA 13.2 / ORT 1.32 / TensorRT 11.5):
 
 | Encoder | PyTorch | ONNX Runtime (fused) | TensorRT |
 | --- | ---: | ---: | ---: |
-| Small (`vits`) | 29.1 ms | 20.5 ms | 7.5 ms |
-| Base (`vitb`) | 51.0 ms | 37.4 ms | 16.5 ms |
-| Large (`vitl`) | 127.3 ms | 93.5 ms | 47.3 ms |
+| Small (`vits`) | 13.2 ms | 14.5 ms | 6.8 ms |
+| Base (`vitb`) | 29.8 ms | 30.4 ms | 15.6 ms |
+| Large (`vitl`) | 83.9 ms | 86.3 ms | 46.0 ms |
 
-TensorRT is about 2–2.7× faster than fused ONNX Runtime, which is about 1.4×
-faster than PyTorch. All backends closely match the FP32 reference output
-(correlation ≈ 1.0, normalized error ≈ 1e-3).
+TensorRT is about 1.8–1.9× faster than PyTorch and fused ONNX Runtime.
+End-to-end latency (including GPU pre/postprocessing and CPU↔GPU transfers)
+adds ~2–3 ms per image (e.g. Large: 86.9 ms PyTorch, 88.4 ms ONNX, 48.3 ms
+TensorRT). All backends closely match the FP32 reference output (correlation ≈
+1.0, normalized error ≈ 1e-3).
 
 ## Installation
 
@@ -68,16 +72,18 @@ and returns one ready to use. The converted files are saved to
 `ComfyUI/models/depthanything/`, so later sessions can load them with the
 `Load Depth Model (ONNX)` / `(TensorRT)` nodes and skip converting.
 
-**ONNX Runtime (~1.4× faster)**
+**ONNX Runtime (portable / CPU & CUDA)**
 
 ```text
 [Load Depth Model (PyTorch)] -> [Export to ONNX] -> [Fuse ONNX Attention] -> [Estimate Depth (ONNX)]
 ```
 
-`Fuse ONNX Attention` is where the speedup comes from. It is optional; the
-unfused model also runs, just slower.
+`Fuse ONNX Attention` is where the ONNX speedup comes from (optional; the
+unfused graph also runs, just slower). On modern PyTorch + CUDA, fused ONNX
+roughly matches PyTorch speed; it is mainly useful for portable/CPU deployment
+or setups without TensorRT.
 
-**TensorRT (~2–2.7× faster again, NVIDIA only)** — template *Depth estimation - TensorRT*
+**TensorRT (~1.8–1.9× faster, NVIDIA only)** — template *Depth estimation - TensorRT*
 
 ```text
 [Load Depth Model (PyTorch)] -> [Export to ONNX] -> [Build TensorRT Engine] -> [Estimate Depth (TensorRT)]
