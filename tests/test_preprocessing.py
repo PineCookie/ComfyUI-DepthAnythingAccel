@@ -3,6 +3,7 @@ import unittest
 import torch
 
 from depthaccel.preprocessing import (
+    _norm_stats,
     align_to_patch,
     guard_inference_resolution,
     normalize_depth,
@@ -76,6 +77,38 @@ class PreprocessingTests(unittest.TestCase):
 
     def test_guard_inference_resolution_unknown_precision_is_unlimited(self):
         self.assertEqual(guard_inference_resolution(4096, 4096, "custom"), (4088, 4088))
+
+    def test_norm_stats_are_cached_per_device_and_dtype(self):
+        first = _norm_stats(torch.device("cpu"), torch.float32)
+        second = _norm_stats(torch.device("cpu"), torch.float32)
+        self.assertIs(first[0], second[0])
+        self.assertIs(first[1], second[1])
+
+    def test_prepare_image_optional_dtype_casts_after_fp32_normalization(self):
+        image = torch.rand(1, 20, 30, 3)
+        fp32_prepared, _ = prepare_image(image)
+        fp16_prepared, _ = prepare_image(image, device="cpu", dtype=torch.float16)
+
+        self.assertEqual(fp16_prepared.dtype, torch.float16)
+        self.assertTrue(torch.equal(fp16_prepared, fp32_prepared.to(torch.float16)))
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is not available")
+    def test_prepare_and_restore_on_cuda_match_cpu(self):
+        image = torch.rand(1, 100, 150, 3)
+        cpu_prepared, cpu_geom = prepare_image(image)
+        gpu_prepared, gpu_geom = prepare_image(image, device="cuda", dtype=torch.float16)
+
+        self.assertEqual(gpu_geom, cpu_geom)
+        self.assertEqual(gpu_prepared.device.type, "cuda")
+        self.assertEqual(gpu_prepared.dtype, torch.float16)
+        self.assertTrue(
+            torch.allclose(gpu_prepared.cpu().float(), cpu_prepared, atol=1e-2, rtol=1e-2)
+        )
+
+        raw = torch.rand(1, cpu_geom.inference_height, cpu_geom.inference_width)
+        cpu_out = restore_depth(raw, cpu_geom)
+        gpu_out = restore_depth(raw.cuda(), gpu_geom).cpu()
+        self.assertTrue(torch.allclose(gpu_out, cpu_out, atol=1e-5))
 
 
 if __name__ == "__main__":

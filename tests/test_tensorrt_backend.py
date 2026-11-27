@@ -104,8 +104,9 @@ class TensorrtBackendTests(unittest.TestCase):
             ).reshape(1, prepared.shape[2], prepared.shape[3])
 
         image = torch.zeros(3, 15, 17, 3)
+        fake_model = SimpleNamespace(device=torch.device("cpu"), torch_dtype=torch.float32)
         with mock.patch("depthaccel.tensorrt_backend.infer_tensorrt_raw", side_effect=fake_infer):
-            out = estimate_depth_tensorrt(object(), image)
+            out = estimate_depth_tensorrt(fake_model, image)
 
         self.assertEqual(seen_batches, [1, 1, 1])
         self.assertEqual(tuple(out.shape), (3, 15, 17, 3))

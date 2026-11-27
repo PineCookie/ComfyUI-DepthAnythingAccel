@@ -6,7 +6,7 @@ from pathlib import Path
 import torch
 
 from .paths import resolve_model_file
-from .preprocessing import PATCH_SIZE, prepare_image, restore_depth
+from .preprocessing import PATCH_SIZE, prepare_image, restore_depth, validate_image_tensor
 
 
 @dataclass
@@ -248,9 +248,15 @@ def infer_tensorrt_raw(
 
 def estimate_depth_tensorrt(model: TensorrtDepthModel, image: torch.Tensor) -> torch.Tensor:
     """Return a normalized ComfyUI IMAGE tensor at the original size."""
-    prepared, geometry = prepare_image(image)
-    outputs = [
-        restore_depth(infer_tensorrt_raw(model, sample.unsqueeze(0)), geometry).cpu()
-        for sample in prepared
-    ]
+    batch, _, _ = validate_image_tensor(image)
+    outputs = []
+    with torch.inference_mode():
+        for index in range(batch):
+            prepared, geometry = prepare_image(
+                image[index : index + 1],
+                device=model.device,
+                dtype=model.torch_dtype,
+            )
+            depth = infer_tensorrt_raw(model, prepared)
+            outputs.append(restore_depth(depth, geometry).cpu())
     return outputs[0] if len(outputs) == 1 else torch.cat(outputs, dim=0)

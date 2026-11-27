@@ -12,7 +12,7 @@ from pathlib import Path
 import torch
 
 from .paths import resolve_model_file
-from .preprocessing import prepare_image, restore_depth
+from .preprocessing import prepare_image, restore_depth, validate_image_tensor
 
 
 DA2_METADATA_CONFIGS = {
@@ -252,11 +252,17 @@ def end_onnx_profiling(reference: OnnxDepthModel) -> Path:
 
 
 def estimate_depth_onnx(reference: OnnxDepthModel, image: torch.Tensor) -> torch.Tensor:
-    prepared, geometry = prepare_image(image)
-    outputs = [
-        restore_depth(infer_onnx_raw(reference, sample.unsqueeze(0)), geometry).cpu()
-        for sample in prepared
-    ]
+    batch, _, _ = validate_image_tensor(image)
+    outputs = []
+    with torch.inference_mode():
+        for index in range(batch):
+            prepared, geometry = prepare_image(
+                image[index : index + 1],
+                device=reference.device,
+                dtype=reference.torch_dtype,
+            )
+            depth = infer_onnx_raw(reference, prepared)
+            outputs.append(restore_depth(depth, geometry).cpu())
     return outputs[0] if len(outputs) == 1 else torch.cat(outputs, dim=0)
 
 

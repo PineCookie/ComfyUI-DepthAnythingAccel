@@ -15,6 +15,20 @@ PATCH_SIZE = 14
 IMAGE_MEAN = (0.485, 0.456, 0.406)
 IMAGE_STD = (0.229, 0.224, 0.225)
 
+_NORM_STATS_CACHE: dict[tuple[torch.device, torch.dtype], tuple[torch.Tensor, torch.Tensor]] = {}
+
+
+def _norm_stats(device: torch.device, dtype: torch.dtype) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return cached ImageNet normalization tensors on ``(device, dtype)``."""
+    key = (device, dtype)
+    cached = _NORM_STATS_CACHE.get(key)
+    if cached is None:
+        mean = torch.tensor(IMAGE_MEAN, device=device, dtype=dtype).view(1, 3, 1, 1)
+        std = torch.tensor(IMAGE_STD, device=device, dtype=dtype).view(1, 3, 1, 1)
+        cached = (mean, std)
+        _NORM_STATS_CACHE[key] = cached
+    return cached
+
 # Conservative native-resolution budgets in aligned pixels, derived from the
 # P0 native-2K OOM finding on a 16 GB GPU (FP32 vitl OOMs near 3.5 MP). These
 # guard the PyTorch/ONNX backends; a TensorRT engine is bounded by its own
@@ -40,11 +54,8 @@ def align_to_patch(size: int, patch_size: int = PATCH_SIZE) -> int:
     return max(patch_size, (size // patch_size) * patch_size)
 
 
-def prepare_image(
-    image: torch.Tensor,
-    patch_size: int = PATCH_SIZE,
-) -> tuple[torch.Tensor, ImageGeometry]:
-    """Prepare a ComfyUI IMAGE tensor for the DA2 model."""
+def validate_image_tensor(image: torch.Tensor) -> tuple[int, int, int]:
+    """Validate a ComfyUI IMAGE tensor and return ``(batch, height, width)``."""
     if image.ndim != 4:
         raise ValueError(f"Expected IMAGE with shape [B,H,W,C], got {tuple(image.shape)}.")
     if image.shape[-1] != 3:
@@ -53,9 +64,35 @@ def prepare_image(
     batch, original_height, original_width, _ = image.shape
     if batch < 1:
         raise ValueError("IMAGE batch must not be empty.")
+    return batch, original_height, original_width
+
+
+def prepare_image(
+    image: torch.Tensor,
+    patch_size: int = PATCH_SIZE,
+    *,
+    device: torch.device | str | None = None,
+    dtype: torch.dtype | None = None,
+) -> tuple[torch.Tensor, ImageGeometry]:
+    """Prepare a ComfyUI IMAGE tensor for the DA2 model.
+
+    When ``device`` is provided, the tensor is transferred before resizing and
+    normalizing so interpolation and normalization run on the target device
+    (e.g. CUDA) rather than CPU. Normalization always runs in the input tensor's
+    floating precision (FP32 for ComfyUI IMAGE) before an optional ``dtype`` cast.
+    """
+    _, original_height, original_width = validate_image_tensor(image)
 
     inference_height = align_to_patch(original_height, patch_size)
     inference_width = align_to_patch(original_width, patch_size)
+
+    if device is not None:
+        target_device = torch.device(device)
+        if image.device != target_device:
+            image = image.to(
+                device=target_device,
+                non_blocking=(target_device.type == "cuda"),
+            )
 
     image = image.permute(0, 3, 1, 2)
     if (inference_height, inference_width) != (original_height, original_width):
@@ -65,9 +102,10 @@ def prepare_image(
             mode="bilinear",
         )
 
-    mean = image.new_tensor(IMAGE_MEAN).view(1, 3, 1, 1)
-    std = image.new_tensor(IMAGE_STD).view(1, 3, 1, 1)
+    mean, std = _norm_stats(image.device, image.dtype)
     image = (image - mean) / std
+    if dtype is not None and image.dtype != dtype:
+        image = image.to(dtype=dtype)
 
     geometry = ImageGeometry(
         original_height=original_height,

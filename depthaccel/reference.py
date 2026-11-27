@@ -12,7 +12,7 @@ from pathlib import Path
 import torch
 
 from .paths import default_comfyui_root, resolve_model_file
-from .preprocessing import prepare_image, restore_depth
+from .preprocessing import prepare_image, restore_depth, validate_image_tensor
 
 
 MODEL_CONFIGS = {
@@ -166,10 +166,26 @@ def load_reference_model(
     )
 
 
+def _autocast_context(precision: str):
+    if precision == "fp32":
+        return nullcontext()
+    dtype = torch.float16 if precision == "fp16" else torch.bfloat16
+    return torch.autocast("cuda", dtype=dtype)
+
+
 def estimate_depth(reference: ReferenceDepthModel, image: torch.Tensor) -> torch.Tensor:
-    prepared, geometry = prepare_image(image)
-    depth = infer_reference_raw(reference, prepared)
-    return restore_depth(depth, geometry)
+    batch, _, _ = validate_image_tensor(image)
+    outputs = []
+    with torch.inference_mode():
+        for index in range(batch):
+            prepared, geometry = prepare_image(
+                image[index : index + 1],
+                device=reference.device,
+            )
+            with _autocast_context(reference.precision):
+                depth = reference.model(prepared)
+            outputs.append(restore_depth(depth, geometry).cpu())
+    return outputs[0] if len(outputs) == 1 else torch.cat(outputs, dim=0)
 
 
 def infer_reference_raw(
@@ -178,12 +194,7 @@ def infer_reference_raw(
 ) -> torch.Tensor:
     """Run DA2 on a prepared BCHW tensor without output normalization."""
     outputs = []
-    autocast = nullcontext()
-    if reference.precision != "fp32":
-        dtype = torch.float16 if reference.precision == "fp16" else torch.bfloat16
-        autocast = torch.autocast("cuda", dtype=dtype)
-
-    with torch.inference_mode(), autocast:
+    with torch.inference_mode(), _autocast_context(reference.precision):
         for sample in prepared:
             depth = reference.model(sample.unsqueeze(0).to(reference.device))
             outputs.append(depth.detach().cpu())
