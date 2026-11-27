@@ -22,7 +22,13 @@ class TensorrtDepthModel:
     opt_hw: tuple[int, int]
     max_hw: tuple[int, int]
     stream: torch.cuda.Stream
+    use_cuda_graph: bool = True
     _context: object = field(default=None, repr=False)
+    _last_shape: tuple[int, int, int, int] | None = field(default=None, repr=False)
+    _graph_shape: tuple[int, int, int, int] | None = field(default=None, repr=False)
+    _graph: torch.cuda.CUDAGraph | None = field(default=None, repr=False)
+    _graph_input: torch.Tensor | None = field(default=None, repr=False)
+    _graph_output: torch.Tensor | None = field(default=None, repr=False)
 
 
 def _engine_version_path(engine_path: Path) -> Path:
@@ -204,9 +210,56 @@ def _bind(
     return context, depth
 
 
+def _clear_cuda_graph(model: TensorrtDepthModel) -> None:
+    model._graph = None
+    model._graph_shape = None
+    model._graph_input = None
+    model._graph_output = None
+
+
+def _capture_cuda_graph(
+    model: TensorrtDepthModel,
+    shape: tuple[int, int, int, int],
+) -> None:
+    """Capture a TensorRT CUDA Graph for ``shape`` on ``model.stream``."""
+    batch, channels, height, width = shape
+    _clear_cuda_graph(model)
+    if model._context is None:
+        model._context = model.engine.create_execution_context()
+    context = model._context
+    if not context.set_input_shape(model.input_name, shape):
+        raise RuntimeError(f"TensorRT rejected input shape {shape}.")
+
+    static_in = torch.empty(shape, device=model.device, dtype=model.torch_dtype)
+    static_out = torch.empty(
+        (batch, height, width), device=model.device, dtype=model.torch_dtype
+    )
+    context.set_tensor_address(model.input_name, static_in.data_ptr())
+    context.set_tensor_address(model.output_name, static_out.data_ptr())
+
+    # Synchronize the stream before graph capture to ensure prior eager runs
+    # finished cleanly on this execution context.
+    model.stream.synchronize()
+    graph = torch.cuda.CUDAGraph()
+    try:
+        with torch.cuda.graph(graph, stream=model.stream):
+            if not context.execute_async_v3(model.stream.cuda_stream):
+                raise RuntimeError("TensorRT CUDA Graph capture failed.")
+    except Exception:
+        _clear_cuda_graph(model)
+        raise
+
+    model._graph = graph
+    model._graph_shape = shape
+    model._graph_input = static_in
+    model._graph_output = static_out
+
+
 def infer_tensorrt_raw(
     model: TensorrtDepthModel,
     prepared: torch.Tensor,
+    *,
+    _allow_output_alias: bool = False,
 ) -> torch.Tensor:
     """Run TensorRT on a prepared BCHW tensor without output normalization."""
     if prepared.ndim != 4:
@@ -229,20 +282,42 @@ def infer_tensorrt_raw(
             f"{height}x{width} (multiples of {PATCH_SIZE})."
         )
 
+    shape = (batch, channels, height, width)
     prepared = prepared.contiguous().to(device=model.device, dtype=model.torch_dtype)
+    current_stream = torch.cuda.current_stream(model.device)
+
+    # Lazily capture a CUDA Graph once a shape repeats (e.g. video frames or
+    # repeated same-resolution runs), avoiding capture overhead on one-off sizes.
+    if model.use_cuda_graph and model._graph_shape != shape:
+        if model._graph_shape is not None:
+            _clear_cuda_graph(model)
+        elif model._last_shape == shape:
+            _capture_cuda_graph(model, shape)
+
+    if model.use_cuda_graph and model._graph is not None and model._graph_shape == shape:
+        model.stream.wait_stream(current_stream)
+        prepared.record_stream(model.stream)
+        with torch.cuda.stream(model.stream):
+            model._graph_input.copy_(prepared)
+            model._graph.replay()
+            depth = model._graph_output if _allow_output_alias else model._graph_output.clone()
+        depth.record_stream(model.stream)
+        current_stream.wait_stream(model.stream)
+        return depth
+
     context, depth = _bind(model, prepared)
     # TensorRT runs on its own stream. Order the producer (the PyTorch current
     # stream that filled ``prepared``) before the engine stream, and the engine
     # stream before the current stream that consumes ``depth``; otherwise TRT
     # can read a half-written input buffer or the caller can read a not-yet-run
     # output in a streamed ComfyUI pipeline.
-    current_stream = torch.cuda.current_stream(model.device)
     model.stream.wait_stream(current_stream)
     prepared.record_stream(model.stream)
     depth.record_stream(model.stream)
     if not context.execute_async_v3(model.stream.cuda_stream):
         raise RuntimeError("TensorRT inference failed.")
     current_stream.wait_stream(model.stream)
+    model._last_shape = shape
     return depth
 
 
@@ -257,6 +332,6 @@ def estimate_depth_tensorrt(model: TensorrtDepthModel, image: torch.Tensor) -> t
                 device=model.device,
                 dtype=model.torch_dtype,
             )
-            depth = infer_tensorrt_raw(model, prepared)
+            depth = infer_tensorrt_raw(model, prepared, _allow_output_alias=True)
             outputs.append(restore_depth(depth, geometry).cpu())
     return outputs[0] if len(outputs) == 1 else torch.cat(outputs, dim=0)

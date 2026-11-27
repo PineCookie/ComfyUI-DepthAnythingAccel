@@ -128,6 +128,36 @@ class ReferenceCheckpointTests(unittest.TestCase):
         out = estimate_depth(loaded, torch.zeros(1, 14, 14, 3))
         self.assertEqual(tuple(out.shape), (1, 14, 14, 3))
 
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is not available")
+    def test_load_reference_model_uses_native_fp16_weights_and_channels_last_on_cuda(self):
+        from tempfile import TemporaryDirectory
+
+        from safetensors.torch import save_file
+
+        from depthaccel.models.da2 import DepthAnythingV2
+
+        source = DepthAnythingV2(**MODEL_CONFIGS["vits"]).eval()
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "depth_anything_v2_vits_fp32.safetensors"
+            save_file(source.state_dict(), str(path))
+            loaded = load_reference_model(
+                str(path),
+                encoder="auto",
+                precision="fp16",
+                device=torch.device("cuda", 0),
+            )
+
+        self.assertEqual(loaded.torch_dtype, torch.float16)
+        self.assertEqual(next(loaded.model.parameters()).dtype, torch.float16)
+        self.assertTrue(
+            loaded.model.depth_head.projects[0].weight.is_contiguous(
+                memory_format=torch.channels_last
+            )
+        )
+        out = estimate_depth(loaded, torch.rand(1, 14, 14, 3))
+        self.assertEqual(tuple(out.shape), (1, 14, 14, 3))
+        self.assertEqual(out.device.type, "cpu")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -36,6 +36,8 @@ class OnnxDepthModel:
     precision: str
     torch_dtype: torch.dtype
     use_user_compute_stream: bool = True
+    stream: torch.cuda.Stream | None = None
+    _io_binding: object = None
 
 
 def _resolve_target_device(device: str | torch.device) -> torch.device:
@@ -163,6 +165,7 @@ def load_onnx_model(
     )
     available = ort.get_available_providers()
     compute_stream = None
+    cuda_stream = None
     if target.type == "cuda":
         if "CUDAExecutionProvider" not in available:
             raise RuntimeError(
@@ -174,9 +177,14 @@ def load_onnx_model(
         provider_options = {
             "device_id": device_id,
             "do_copy_in_default_stream": True,
+            "cudnn_conv_algo_search": "HEURISTIC",
         }
         if use_user_compute_stream:
-            compute_stream = int(torch.cuda.current_stream(target).cuda_stream)
+            # Use a dedicated non-default CUDA stream so ORT receives a non-zero
+            # stream handle and can be ordered via GPU-side wait_stream without
+            # stalling the CPU on current_stream.synchronize().
+            cuda_stream = torch.cuda.Stream(device=target)
+            compute_stream = int(cuda_stream.cuda_stream)
             provider_options["user_compute_stream"] = str(compute_stream)
         providers = [
             ("CUDAExecutionProvider", provider_options),
@@ -220,6 +228,7 @@ def load_onnx_model(
         precision=precision,
         torch_dtype=torch_dtype,
         use_user_compute_stream=use_user_compute_stream,
+        stream=cuda_stream,
     )
 
 
@@ -242,6 +251,8 @@ def _ensure_onnx_session(reference: OnnxDepthModel) -> None:
     reference.compute_stream = loaded.compute_stream
     reference.precision = loaded.precision
     reference.torch_dtype = loaded.torch_dtype
+    reference.stream = loaded.stream
+    reference._io_binding = None
 
 
 def end_onnx_profiling(reference: OnnxDepthModel) -> Path:
@@ -286,20 +297,27 @@ def infer_onnx_raw(reference: OnnxDepthModel, prepared: torch.Tensor) -> torch.T
         # so make the source buffer contiguous before the (CPU-origin) transfer
         # instead of forcing a second copy on CUDA.
         prepared = _prepare_binding_tensor(prepared, reference.device, reference.torch_dtype)
-        current_stream = torch.cuda.current_stream(reference.device)
-        if (
-            reference.compute_stream in (None, 0)
-            or int(current_stream.cuda_stream) != reference.compute_stream
-        ):
-            # Ensure the H2D copy on PyTorch's stream completes before ORT reads
-            # the bound device pointer when ORT may run on a different stream.
-            current_stream.synchronize()
         depth = torch.empty(
             (prepared.shape[0], prepared.shape[2], prepared.shape[3]),
             device=reference.device,
             dtype=reference.torch_dtype,
         )
-        io_binding = reference.session.io_binding()
+        current_stream = torch.cuda.current_stream(reference.device)
+        if reference.stream is not None:
+            # Order PyTorch producer -> ORT stream -> PyTorch consumer purely on
+            # the GPU without blocking the CPU.
+            reference.stream.wait_stream(current_stream)
+            prepared.record_stream(reference.stream)
+            depth.record_stream(reference.stream)
+        elif (
+            reference.compute_stream in (None, 0)
+            or int(current_stream.cuda_stream) != reference.compute_stream
+        ):
+            current_stream.synchronize()
+
+        if reference._io_binding is None:
+            reference._io_binding = reference.session.io_binding()
+        io_binding = reference._io_binding
         io_binding.bind_input(
             name=reference.input_name,
             device_type="cuda",
@@ -316,9 +334,11 @@ def infer_onnx_raw(reference: OnnxDepthModel, prepared: torch.Tensor) -> torch.T
             shape=tuple(depth.shape),
             buffer_ptr=depth.data_ptr(),
         )
-        io_binding.synchronize_inputs()
         reference.session.run_with_iobinding(io_binding)
-        io_binding.synchronize_outputs()
+        if reference.stream is not None:
+            current_stream.wait_stream(reference.stream)
+        else:
+            io_binding.synchronize_outputs()
         return depth
 
     input_array = prepared.to(dtype=reference.torch_dtype).detach().cpu().numpy()

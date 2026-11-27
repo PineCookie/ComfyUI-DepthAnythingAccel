@@ -177,6 +177,35 @@ class NodeHelperTests(unittest.TestCase):
             _, kwargs = build_mock.call_args
             self.assertEqual(kwargs["timing_cache"], root / ".trt_timing.cache")
 
+    def test_export_onnx_node_reloads_fp32_checkpoint_when_loaded_model_is_fp16(self):
+        import importlib
+        import tempfile
+        from types import SimpleNamespace
+
+        export_onnx = importlib.import_module(PACKAGE_NAME + ".tools.export_onnx")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            fake_model = SimpleNamespace(
+                model=torch.nn.Linear(1, 1),
+                patcher=object(),
+                model_path=root / "depth_anything_v2_vits_fp32.safetensors",
+                encoder="vits",
+                model_family="da2",
+                precision="fp16",
+                device=torch.device("cuda", 0),
+            )
+            with (
+                mock.patch("folder_paths.get_folder_paths", return_value=[str(root)]),
+                mock.patch("comfy.model_management.load_models_gpu") as gpu_mock,
+                mock.patch.object(export_onnx, "export_dynamic_onnx") as export_mock,
+            ):
+                self.nodes.DepthAccelExportOnnx.execute(fake_model, "fp32", "cpu", 560, 784)
+
+            gpu_mock.assert_not_called()
+            export_mock.assert_called_once()
+            _, kwargs = export_mock.call_args
+            self.assertIsNone(kwargs["reference"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,7 +5,6 @@ Loads a DA2 or architecture-compatible DAD checkpoint into the repository-owned
 inference. FP32 is the conservative default; FP16/BF16 use CUDA autocast.
 """
 
-from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,6 +31,7 @@ class ReferenceDepthModel:
     model_path: Path
     encoder: str
     model_family: str
+    torch_dtype: torch.dtype = torch.float32
     # ComfyUI ModelPatcher that moves ``model`` to ``device`` before each run;
     # set by the node layer, None for CLI use.
     patcher: object = None
@@ -142,10 +142,23 @@ def load_reference_model(
             f"Select encoder={detected_encoder!r}."
         )
 
+    target_device = device or _resolve_device()
+    if target_device.type != "cuda":
+        # Low-precision weights are only accelerated on CUDA/ROCm; record what
+        # actually runs so the resolution budget matches.
+        precision = "fp32"
+    target_dtype = (
+        torch.float16
+        if precision == "fp16"
+        else torch.bfloat16
+        if precision == "bf16"
+        else torch.float32
+    )
+
     load_tensors = {
         key: (
-            value.float()
-            if value.is_floating_point() and value.dtype != torch.float32
+            value.to(dtype=target_dtype)
+            if value.is_floating_point() and value.dtype != target_dtype
             else value
         )
         for key, value in state_dict.items()
@@ -161,12 +174,11 @@ def load_reference_model(
             f"missing={missing_keys[:5]}, unexpected={unexpected_keys[:5]}"
         )
 
-    target_device = device or _resolve_device()
-    if target_device.type != "cuda":
-        # Autocast is only used on CUDA; record what actually runs so the
-        # resolution budget matches.
-        precision = "fp32"
     model.eval().to(offload_device or target_device)
+    if target_device.type == "cuda":
+        # channels_last accelerates the DPTHead 2D convolutions on Tensor Cores
+        # while keeping the ViT backbone's standard 3D token tensors untouched.
+        model.depth_head.to(memory_format=torch.channels_last)
     return ReferenceDepthModel(
         model=model,
         device=target_device,
@@ -174,14 +186,8 @@ def load_reference_model(
         model_path=path,
         encoder=encoder,
         model_family=resolved_family,
+        torch_dtype=target_dtype,
     )
-
-
-def _autocast_context(precision: str):
-    if precision == "fp32":
-        return nullcontext()
-    dtype = torch.float16 if precision == "fp16" else torch.bfloat16
-    return torch.autocast("cuda", dtype=dtype)
 
 
 def estimate_depth(reference: ReferenceDepthModel, image: torch.Tensor) -> torch.Tensor:
@@ -192,9 +198,9 @@ def estimate_depth(reference: ReferenceDepthModel, image: torch.Tensor) -> torch
             prepared, geometry = prepare_image(
                 image[index : index + 1],
                 device=reference.device,
+                dtype=reference.torch_dtype,
             )
-            with _autocast_context(reference.precision):
-                depth = reference.model(prepared)
+            depth = reference.model(prepared)
             outputs.append(restore_depth(depth, geometry).cpu())
     return outputs[0] if len(outputs) == 1 else torch.cat(outputs, dim=0)
 
@@ -205,9 +211,14 @@ def infer_reference_raw(
 ) -> torch.Tensor:
     """Run DA2 on a prepared BCHW tensor without output normalization."""
     outputs = []
-    with torch.inference_mode(), _autocast_context(reference.precision):
+    with torch.inference_mode():
         for sample in prepared:
-            depth = reference.model(sample.unsqueeze(0).to(reference.device))
+            depth = reference.model(
+                sample.unsqueeze(0).to(
+                    device=reference.device,
+                    dtype=reference.torch_dtype,
+                )
+            )
             outputs.append(depth.detach().cpu())
 
     return torch.cat(outputs, dim=0)

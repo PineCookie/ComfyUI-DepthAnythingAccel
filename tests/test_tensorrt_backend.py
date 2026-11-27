@@ -97,7 +97,7 @@ class TensorrtBackendTests(unittest.TestCase):
     def test_estimate_depth_tensorrt_restores_each_frame_to_cpu(self):
         seen_batches = []
 
-        def fake_infer(model, prepared):
+        def fake_infer(model, prepared, **_kwargs):
             seen_batches.append(prepared.shape[0])
             return torch.arange(
                 prepared.shape[2] * prepared.shape[3], dtype=torch.float32

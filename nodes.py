@@ -238,9 +238,8 @@ class DepthAccelLoadReferenceModel(io.ComfyNode):
                     options=["auto", "fp32", "fp16", "bf16"],
                     default="auto",
                     tooltip=(
-                        "auto uses FP16 autocast on CUDA and FP32 elsewhere; "
-                        "model weights are loaded in FP32 and autocast runs on "
-                        "CUDA."
+                        "auto uses FP16 on CUDA and FP32 elsewhere; weights are "
+                        "loaded in the selected precision on CUDA."
                     ),
                 ),
             ],
@@ -539,13 +538,20 @@ class DepthAccelExportOnnx(io.ComfyNode):
             _Path(_model_folder_dir())
             / f"{model.model_family}_{model.encoder}_{precision}_dynamic.onnx"
         )
-        # Room for tracing plus the converted weight copy the export may make.
-        comfy.model_management.load_models_gpu(
-            [model.patcher],
-            memory_required=height * width * _REFERENCE_BYTES_PER_PIXEL[precision]
-            + comfy.model_management.module_size(model.model),
-            force_full_load=True,
-        )
+        # If the user asks for an FP32 ONNX graph from an FP16/BF16-loaded model,
+        # reload true FP32 weights from the source checkpoint instead of upcasting
+        # already-quantized weights in memory.
+        reuse_reference = model
+        if precision == "fp32" and getattr(model, "precision", "fp32") != "fp32":
+            reuse_reference = None
+        else:
+            # Room for tracing plus the converted weight copy the export may make.
+            comfy.model_management.load_models_gpu(
+                [model.patcher],
+                memory_required=height * width * _REFERENCE_BYTES_PER_PIXEL[precision]
+                + comfy.model_management.module_size(model.model),
+                force_full_load=True,
+            )
         export_dynamic_onnx(
             str(model.model_path),
             output,
@@ -553,7 +559,9 @@ class DepthAccelExportOnnx(io.ComfyNode):
             precision=precision,
             height=height,
             width=width,
-            reference=model,
+            device=str(model.device),
+            model_family=model.model_family,
+            reference=reuse_reference,
         )
         target_device = _cuda_device_arg() if device == "cuda" else device
         metadata = {
