@@ -50,9 +50,78 @@ def check_engine_version(engine_path: Path, current_version: str) -> None:
         )
 
 
+def _resolve_cuda_device(device: str | torch.device) -> torch.device:
+    target = torch.device(device)
+    if target.type != "cuda":
+        raise ValueError("TensorRT engines require a CUDA device.")
+    if target.index is None:
+        device_id = torch.cuda.current_device() if torch.cuda.is_available() else 0
+        return torch.device("cuda", device_id)
+    return target
+
+
+def _validate_engine_contract(
+    engine,
+    trt,
+) -> tuple[str, str, str, torch.dtype, tuple[int, int], tuple[int, int], tuple[int, int]]:
+    """Validate that a TensorRT engine matches DepthAccel's I/O contract."""
+    names = [engine.get_tensor_name(index) for index in range(engine.num_io_tensors)]
+    inputs = [name for name in names if engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT]
+    outputs = [name for name in names if engine.get_tensor_mode(name) == trt.TensorIOMode.OUTPUT]
+    if len(inputs) != 1 or len(outputs) != 1:
+        raise ValueError(
+            "Expected one TensorRT input and one output, "
+            f"got {len(inputs)} inputs and {len(outputs)} outputs."
+        )
+
+    input_name, output_name = inputs[0], outputs[0]
+    input_dtype = engine.get_tensor_dtype(input_name)
+    output_dtype = engine.get_tensor_dtype(output_name)
+    if input_dtype == trt.DataType.HALF:
+        precision, torch_dtype = "fp16", torch.float16
+    elif input_dtype == trt.DataType.FLOAT:
+        precision, torch_dtype = "fp32", torch.float32
+    else:
+        raise ValueError(f"Unsupported TensorRT input dtype: {input_dtype}")
+    if output_dtype != input_dtype:
+        raise ValueError(
+            "DepthAccel TensorRT engines must use matching input/output dtypes, "
+            f"got input={input_dtype}, output={output_dtype}."
+        )
+
+    input_shape = tuple(engine.get_tensor_shape(input_name))
+    output_shape = tuple(engine.get_tensor_shape(output_name))
+    if len(input_shape) != 4 or (input_shape[1] not in (-1, 3)):
+        raise ValueError(f"Expected TensorRT input [B,3,H,W], got {input_shape}.")
+    if len(output_shape) != 3:
+        raise ValueError(f"Expected TensorRT output [B,H,W], got {output_shape}.")
+
+    if getattr(engine, "num_optimization_profiles", 1) < 1:
+        raise ValueError("TensorRT engine must define at least one optimization profile.")
+    min_shape, opt_shape, max_shape = engine.get_tensor_profile_shape(input_name, 0)
+    if len(min_shape) != 4 or min_shape[1] != 3 or max_shape[1] != 3:
+        raise ValueError(
+            f"Expected TensorRT input profile [B,3,H,W], got min={tuple(min_shape)}, max={tuple(max_shape)}."
+        )
+    if min_shape[0] > 1 or max_shape[0] < 1:
+        raise ValueError(
+            f"TensorRT engine profile must support batch 1, got batch range {min_shape[0]}..{max_shape[0]}."
+        )
+
+    return (
+        input_name,
+        output_name,
+        precision,
+        torch_dtype,
+        (int(min_shape[2]), int(min_shape[3])),
+        (int(opt_shape[2]), int(opt_shape[3])),
+        (int(max_shape[2]), int(max_shape[3])),
+    )
+
+
 def load_tensorrt_model(
     model_path: str | Path,
-    device: str = "cuda",
+    device: str | torch.device = "cuda",
     comfyui_root: Path | None = None,
 ) -> TensorrtDepthModel:
     try:
@@ -64,9 +133,7 @@ def load_tensorrt_model(
         ) from error
     from .trt_logger import get_trt_logger
 
-    target = torch.device(device)
-    if target.type != "cuda":
-        raise ValueError("TensorRT engines require a CUDA device.")
+    target = _resolve_cuda_device(device)
 
     path = resolve_model_file(
         model_path,
@@ -75,30 +142,22 @@ def load_tensorrt_model(
         search_plugin_artifacts=True,
     )
     check_engine_version(path, getattr(trt, "__version__", "unknown"))
-    runtime = trt.Runtime(get_trt_logger())
-    with path.open("rb") as source:
-        engine = runtime.deserialize_cuda_engine(source.read())
+    with torch.cuda.device(target):
+        runtime = trt.Runtime(get_trt_logger())
+        with path.open("rb") as source:
+            engine = runtime.deserialize_cuda_engine(source.read())
     if engine is None:
         raise RuntimeError(f"Failed to deserialize TensorRT engine: {path}")
-    names = [engine.get_tensor_name(index) for index in range(engine.num_io_tensors)]
-    inputs = [name for name in names if engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT]
-    outputs = [name for name in names if engine.get_tensor_mode(name) == trt.TensorIOMode.OUTPUT]
-    if len(inputs) != 1 or len(outputs) != 1:
-        raise ValueError(
-            "Expected one TensorRT input and one output, "
-            f"got {len(inputs)} inputs and {len(outputs)} outputs."
-        )
 
-    input_name, output_name = inputs[0], outputs[0]
-    dtype = engine.get_tensor_dtype(input_name)
-    if dtype == trt.DataType.HALF:
-        precision, torch_dtype = "fp16", torch.float16
-    elif dtype == trt.DataType.FLOAT:
-        precision, torch_dtype = "fp32", torch.float32
-    else:
-        raise ValueError(f"Unsupported TensorRT input dtype: {dtype}")
-
-    min_shape, opt_shape, max_shape = engine.get_tensor_profile_shape(input_name, 0)
+    (
+        input_name,
+        output_name,
+        precision,
+        torch_dtype,
+        min_hw,
+        opt_hw,
+        max_hw,
+    ) = _validate_engine_contract(engine, trt)
     stream = torch.cuda.Stream(device=target)
 
     return TensorrtDepthModel(
@@ -109,9 +168,9 @@ def load_tensorrt_model(
         device=target,
         precision=precision,
         torch_dtype=torch_dtype,
-        min_hw=(min_shape[2], min_shape[3]),
-        opt_hw=(opt_shape[2], opt_shape[3]),
-        max_hw=(max_shape[2], max_shape[3]),
+        min_hw=min_hw,
+        opt_hw=opt_hw,
+        max_hw=max_hw,
         stream=stream,
     )
 
@@ -150,7 +209,8 @@ def infer_tensorrt_raw(
     prepared: torch.Tensor,
 ) -> torch.Tensor:
     """Run TensorRT on a prepared BCHW tensor without output normalization."""
-    prepared = prepared.contiguous().to(device=model.device, dtype=model.torch_dtype)
+    if prepared.ndim != 4:
+        raise ValueError(f"Expected prepared tensor [B,3,H,W], got {tuple(prepared.shape)}.")
     batch, channels, height, width = prepared.shape
     if batch != 1:
         raise ValueError(
@@ -169,6 +229,7 @@ def infer_tensorrt_raw(
             f"{height}x{width} (multiples of {PATCH_SIZE})."
         )
 
+    prepared = prepared.contiguous().to(device=model.device, dtype=model.torch_dtype)
     context, depth = _bind(model, prepared)
     # TensorRT runs on its own stream. Order the producer (the PyTorch current
     # stream that filled ``prepared``) before the engine stream, and the engine
@@ -177,6 +238,8 @@ def infer_tensorrt_raw(
     # output in a streamed ComfyUI pipeline.
     current_stream = torch.cuda.current_stream(model.device)
     model.stream.wait_stream(current_stream)
+    prepared.record_stream(model.stream)
+    depth.record_stream(model.stream)
     if not context.execute_async_v3(model.stream.cuda_stream):
         raise RuntimeError("TensorRT inference failed.")
     current_stream.wait_stream(model.stream)
@@ -186,6 +249,8 @@ def infer_tensorrt_raw(
 def estimate_depth_tensorrt(model: TensorrtDepthModel, image: torch.Tensor) -> torch.Tensor:
     """Return a normalized ComfyUI IMAGE tensor at the original size."""
     prepared, geometry = prepare_image(image)
-    outputs = [infer_tensorrt_raw(model, sample.unsqueeze(0)) for sample in prepared]
-    depth = torch.cat(outputs, dim=0)
-    return restore_depth(depth, geometry).cpu()
+    outputs = [
+        restore_depth(infer_tensorrt_raw(model, sample.unsqueeze(0)), geometry).cpu()
+        for sample in prepared
+    ]
+    return outputs[0] if len(outputs) == 1 else torch.cat(outputs, dim=0)

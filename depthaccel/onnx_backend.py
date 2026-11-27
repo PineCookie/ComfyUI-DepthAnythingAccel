@@ -35,6 +35,48 @@ class OnnxDepthModel:
     compute_stream: int | None
     precision: str
     torch_dtype: torch.dtype
+    use_user_compute_stream: bool = True
+
+
+def _resolve_target_device(device: str | torch.device) -> torch.device:
+    """Resolve ``device`` to a concrete torch.device, preserving the active CUDA index."""
+    target = torch.device(device)
+    if target.type == "cuda" and target.index is None:
+        device_id = torch.cuda.current_device() if torch.cuda.is_available() else 0
+        return torch.device("cuda", device_id)
+    return target
+
+
+def create_deferred_onnx_model(
+    model_path: str | Path,
+    *,
+    device: str | torch.device = "cuda",
+    precision: str,
+    metadata: dict[str, str] | None = None,
+    use_user_compute_stream: bool = True,
+) -> OnnxDepthModel:
+    """Create an ONNX handle whose ONNX Runtime session is opened on first inference.
+
+    Allows conversion nodes (Export to ONNX, Fuse ONNX Attention) to feed downstream
+    conversion nodes (Fuse, Build TensorRT Engine) without requiring onnxruntime or
+    allocating a CUDA session that will never execute.
+    """
+    if precision not in {"fp32", "fp16"}:
+        raise ValueError(f"Unsupported ONNX precision: {precision!r}.")
+    target = _resolve_target_device(device)
+    return OnnxDepthModel(
+        session=None,
+        input_name="",
+        output_name="",
+        model_path=Path(model_path).resolve(),
+        providers=(),
+        device=target,
+        metadata=dict(metadata or {}),
+        compute_stream=None,
+        precision=precision,
+        torch_dtype=torch.float16 if precision == "fp16" else torch.float32,
+        use_user_compute_stream=use_user_compute_stream,
+    )
 
 
 def _prepare_binding_tensor(
@@ -97,7 +139,7 @@ def _validate_model_contract(input_info, output_info, metadata: dict[str, str]) 
 
 def load_onnx_model(
     model_path: str | Path,
-    device: str = "cuda",
+    device: str | torch.device = "cuda",
     comfyui_root: Path | None = None,
     *,
     enable_profiling: bool = False,
@@ -112,7 +154,7 @@ def load_onnx_model(
             "or onnxruntime (CPU), not both."
         ) from error
 
-    target = torch.device(device)
+    target = _resolve_target_device(device)
     path = resolve_model_file(
         model_path,
         description="ONNX depth model",
@@ -128,7 +170,7 @@ def load_onnx_model(
                 f"{available}). Select device=cpu, or replace onnxruntime "
                 "with onnxruntime-gpu on an NVIDIA GPU."
             )
-        device_id = target.index or 0
+        device_id = target.index if target.index is not None else 0
         provider_options = {
             "device_id": device_id,
             "do_copy_in_default_stream": True,
@@ -177,38 +219,74 @@ def load_onnx_model(
         compute_stream=compute_stream,
         precision=precision,
         torch_dtype=torch_dtype,
+        use_user_compute_stream=use_user_compute_stream,
     )
+
+
+def _ensure_onnx_session(reference: OnnxDepthModel) -> None:
+    """Initialize a deferred ONNX model handle in-place on first inference."""
+    if reference.session is not None:
+        return
+    loaded = load_onnx_model(
+        reference.model_path,
+        device=reference.device,
+        use_user_compute_stream=reference.use_user_compute_stream,
+    )
+    reference.session = loaded.session
+    reference.input_name = loaded.input_name
+    reference.output_name = loaded.output_name
+    reference.model_path = loaded.model_path
+    reference.providers = loaded.providers
+    reference.device = loaded.device
+    reference.metadata = loaded.metadata
+    reference.compute_stream = loaded.compute_stream
+    reference.precision = loaded.precision
+    reference.torch_dtype = loaded.torch_dtype
 
 
 def end_onnx_profiling(reference: OnnxDepthModel) -> Path:
     """Finish ORT profiling and return the generated JSON path."""
+    if reference.session is None:
+        raise RuntimeError("ONNX session has not been initialized.")
     return Path(reference.session.end_profiling()).resolve()
 
 
 def estimate_depth_onnx(reference: OnnxDepthModel, image: torch.Tensor) -> torch.Tensor:
     prepared, geometry = prepare_image(image)
-    depth = infer_onnx_raw(reference, prepared)
-    return restore_depth(depth, geometry).cpu()
+    outputs = [
+        restore_depth(infer_onnx_raw(reference, sample.unsqueeze(0)), geometry).cpu()
+        for sample in prepared
+    ]
+    return outputs[0] if len(outputs) == 1 else torch.cat(outputs, dim=0)
 
 
 def infer_onnx_raw(reference: OnnxDepthModel, prepared: torch.Tensor) -> torch.Tensor:
     """Run ONNX on a prepared BCHW tensor without output normalization."""
     import numpy as np
 
+    _ensure_onnx_session(reference)
+
     if reference.device.type == "cuda":
         # Bind the PyTorch CUDA buffers directly to ORT, removing the external
         # CPU NumPy staging from the hot path; output restoration stays on CUDA
         # until the final ComfyUI tensor copy.
-        device_id = reference.device.index or 0
+        device_id = (
+            reference.device.index
+            if reference.device.index is not None
+            else torch.cuda.current_device()
+        )
         # I/O binding only receives a raw pointer and shape. prepare_image
         # returns a permuted BCHW view whose strides ORT cannot be told about,
         # so make the source buffer contiguous before the (CPU-origin) transfer
         # instead of forcing a second copy on CUDA.
         prepared = _prepare_binding_tensor(prepared, reference.device, reference.torch_dtype)
         current_stream = torch.cuda.current_stream(reference.device)
-        if reference.compute_stream is not None and int(current_stream.cuda_stream) != reference.compute_stream:
-            # The ORT session is tied to its creation stream; finish the work
-            # that produced this external buffer before handing ORT its pointer.
+        if (
+            reference.compute_stream in (None, 0)
+            or int(current_stream.cuda_stream) != reference.compute_stream
+        ):
+            # Ensure the H2D copy on PyTorch's stream completes before ORT reads
+            # the bound device pointer when ORT may run on a different stream.
             current_stream.synchronize()
         depth = torch.empty(
             (prepared.shape[0], prepared.shape[2], prepared.shape[3]),

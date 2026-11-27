@@ -111,8 +111,8 @@ Install what fits your machine into ComfyUI's Python:
   instead.
 - **Size rounding.** Width and height are rounded down to a multiple of 14
   for the model (its patch size); the output is resized back to your image.
-- **Batches.** ONNX Runtime processes a batch in one call; PyTorch and
-  TensorRT run one image at a time.
+- **Batches.** All backends process batches one image at a time to keep VRAM
+  bounded.
 - **Precision.** FP16/BF16 in the PyTorch loader only takes effect on
   CUDA/ROCm; elsewhere it runs in FP32.
 

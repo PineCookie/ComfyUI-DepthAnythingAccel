@@ -1,8 +1,16 @@
+import sys
 import unittest
+from unittest import mock
 
 import torch
 
-from depthaccel.onnx_backend import _prepare_binding_tensor, _validate_model_contract
+from depthaccel.onnx_backend import (
+    _prepare_binding_tensor,
+    _resolve_target_device,
+    _validate_model_contract,
+    create_deferred_onnx_model,
+    estimate_depth_onnx,
+)
 from depthaccel.preprocessing import prepare_image
 
 
@@ -96,6 +104,46 @@ class OnnxBackendTests(unittest.TestCase):
                     "depthaccel.num_heads": "16",
                 },
             )
+
+    def test_deferred_onnx_handle_does_not_require_onnxruntime(self):
+        with mock.patch.dict(sys.modules, {"onnxruntime": None}):
+            handle = create_deferred_onnx_model(
+                "model.onnx",
+                device="cpu",
+                precision="fp16",
+                metadata={"depthaccel.encoder": "vits"},
+            )
+        self.assertIsNone(handle.session)
+        self.assertEqual(handle.precision, "fp16")
+        self.assertEqual(handle.torch_dtype, torch.float16)
+        self.assertEqual(handle.metadata["depthaccel.encoder"], "vits")
+
+    def test_resolve_target_device_uses_active_cuda_index(self):
+        with (
+            mock.patch("torch.cuda.is_available", return_value=True),
+            mock.patch("torch.cuda.current_device", return_value=1),
+        ):
+            self.assertEqual(_resolve_target_device("cuda"), torch.device("cuda", 1))
+            self.assertEqual(_resolve_target_device("cuda:0"), torch.device("cuda", 0))
+            self.assertEqual(_resolve_target_device("cpu"), torch.device("cpu"))
+
+    def test_estimate_depth_onnx_processes_batch_one_frame_at_a_time(self):
+        handle = create_deferred_onnx_model("model.onnx", device="cpu", precision="fp32")
+        seen_batches = []
+
+        def fake_infer(ref, prepared):
+            seen_batches.append(prepared.shape[0])
+            return torch.arange(
+                prepared.shape[2] * prepared.shape[3], dtype=torch.float32
+            ).reshape(1, prepared.shape[2], prepared.shape[3])
+
+        image = torch.zeros(3, 15, 17, 3)
+        with mock.patch("depthaccel.onnx_backend.infer_onnx_raw", side_effect=fake_infer):
+            out = estimate_depth_onnx(handle, image)
+
+        self.assertEqual(seen_batches, [1, 1, 1])
+        self.assertEqual(tuple(out.shape), (3, 15, 17, 3))
+        self.assertEqual(out.device.type, "cpu")
 
 
 if __name__ == "__main__":

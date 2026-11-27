@@ -6,8 +6,12 @@ import comfy.model_patcher
 import folder_paths
 from comfy_api.latest import io
 
-from .depthaccel.onnx_backend import estimate_depth_onnx, load_onnx_model
-from .depthaccel.preprocessing import guard_inference_resolution
+from .depthaccel.onnx_backend import (
+    create_deferred_onnx_model,
+    estimate_depth_onnx,
+    load_onnx_model,
+)
+from .depthaccel.preprocessing import align_to_patch, guard_inference_resolution
 from .depthaccel.reference import estimate_depth, load_reference_model
 from .depthaccel.tensorrt_backend import estimate_depth_tensorrt, load_tensorrt_model
 
@@ -86,6 +90,20 @@ def _default_onnx_device() -> str:
     except ImportError:
         return "cuda"
     return "cuda" if "CUDAExecutionProvider" in ort.get_available_providers() else "cpu"
+
+
+def _cuda_device_arg() -> str:
+    """Return ComfyUI's active CUDA device string (preserving GPU index), else 'cuda'."""
+    device = comfy.model_management.get_torch_device()
+    return str(device) if device.type == "cuda" else "cuda"
+
+
+def _free_cuda_vram(memory_required: int) -> None:
+    """Ask ComfyUI to evict cached models and release PyTorch CUDA cache."""
+    device = comfy.model_management.get_torch_device()
+    if device.type == "cuda":
+        comfy.model_management.free_memory(memory_required, device)
+        comfy.model_management.soft_empty_cache()
 
 
 def _checkpoint_options() -> list[str]:
@@ -319,10 +337,13 @@ class DepthAccelLoadOnnxModel(io.ComfyNode):
     @classmethod
     def execute(cls, model: str, device: str) -> io.NodeOutput:
         path = _resolve_existing(model, (".onnx",))
+        target_device = _cuda_device_arg() if device == "cuda" else device
+        if device == "cuda":
+            _free_cuda_vram(path.stat().st_size * 2)
         return io.NodeOutput(
             load_onnx_model(
                 model_path=str(path),
-                device=device,
+                device=target_device,
             )
         )
 
@@ -348,10 +369,19 @@ class DepthAccelEstimateDepthOnnx(io.ComfyNode):
 
     @classmethod
     def execute(cls, onnx_model, image: "io.Image.Type") -> io.NodeOutput:
+        memory_required = 0
         if getattr(image, "ndim", None) == 4:
-            guard_inference_resolution(
+            height, width = guard_inference_resolution(
                 int(image.shape[1]), int(image.shape[2]), onnx_model.precision
             )
+            memory_required += height * width * _REFERENCE_BYTES_PER_PIXEL.get(
+                onnx_model.precision, 2100
+            )
+        if onnx_model.device.type == "cuda":
+            if onnx_model.session is None and onnx_model.model_path.is_file():
+                memory_required += onnx_model.model_path.stat().st_size * 2
+            if memory_required > 0:
+                _free_cuda_vram(memory_required)
         return io.NodeOutput(estimate_depth_onnx(onnx_model, image))
 
 
@@ -387,10 +417,11 @@ class DepthAccelLoadTensorrtModel(io.ComfyNode):
     @classmethod
     def execute(cls, model: str) -> io.NodeOutput:
         path = _resolve_existing(model, (".trt", ".engine", ".plan"))
+        _free_cuda_vram(path.stat().st_size * 2)
         return io.NodeOutput(
             load_tensorrt_model(
                 model_path=str(path),
-                device="cuda",
+                device=_cuda_device_arg(),
             )
         )
 
@@ -416,6 +447,12 @@ class DepthAccelEstimateDepthTensorrt(io.ComfyNode):
 
     @classmethod
     def execute(cls, trt_model, image: "io.Image.Type") -> io.NodeOutput:
+        if getattr(image, "ndim", None) == 4:
+            height = align_to_patch(int(image.shape[1]))
+            width = align_to_patch(int(image.shape[2]))
+            _free_cuda_vram(
+                height * width * _REFERENCE_BYTES_PER_PIXEL.get(trt_model.precision, 1600)
+            )
         return io.NodeOutput(estimate_depth_tensorrt(trt_model, image))
 
 
@@ -430,8 +467,8 @@ class DepthAccelExportOnnx(io.ComfyNode):
                 "Exports the loaded PyTorch model to a dynamic-shape ONNX graph "
                 "in ComfyUI/models/depthanything and returns it as an ONNX "
                 "model handle. The encoder and checkpoint come from the input "
-                "model. Requires the optional onnxruntime dependency to return "
-                "the handle."
+                "model. ONNX Runtime is only required when running Estimate "
+                "Depth (ONNX)."
             ),
             inputs=[
                 DepthAccelModelIO.Input("model"),
@@ -511,13 +548,21 @@ class DepthAccelExportOnnx(io.ComfyNode):
             width=width,
             reference=model,
         )
-        try:
-            onnx_model = load_onnx_model(str(output), device=device)
-        except Exception as error:
-            raise RuntimeError(
-                f"Exported {output}, but it could not be loaded as an ONNX "
-                f"model handle: {error}"
-            ) from error
+        target_device = _cuda_device_arg() if device == "cuda" else device
+        metadata = {
+            "depthaccel.architecture": (
+                "distill-any-depth" if model.model_family == "dad" else "depth-anything-v2"
+            ),
+            "depthaccel.encoder": model.encoder,
+            "depthaccel.patch_size": "14",
+            "depthaccel.precision": precision,
+        }
+        onnx_model = create_deferred_onnx_model(
+            output,
+            device=target_device,
+            precision=precision,
+            metadata=metadata,
+        )
         return io.NodeOutput(onnx_model)
 
 
@@ -550,7 +595,15 @@ class DepthAccelFuseOnnxAttention(io.ComfyNode):
         source = _Path(onnx_model.model_path)
         output = _Path(_model_folder_dir()) / f"{source.stem}_fused.onnx"
         fuse_attention_model(source, output)
-        fused_model = load_onnx_model(str(output), device=onnx_model.device.type)
+        fused_metadata = dict(onnx_model.metadata)
+        fused_metadata["depthaccel.attention"] = "com.microsoft::attention"
+        fused_model = create_deferred_onnx_model(
+            output,
+            device=onnx_model.device,
+            precision=onnx_model.precision,
+            metadata=fused_metadata,
+            use_user_compute_stream=onnx_model.use_user_compute_stream,
+        )
         return io.NodeOutput(fused_model)
 
 
@@ -624,6 +677,9 @@ class DepthAccelBuildTensorrtEngine(io.ComfyNode):
 
         source = _Path(onnx_model.model_path)
         output = _Path(_model_folder_dir()) / f"{source.stem}.trt"
+        # Free PyTorch models and CUDA cache before TensorRT allocates its
+        # build workspace outside PyTorch's caching allocator.
+        _free_cuda_vram((workspace_gb + 1) << 30)
         build_engine(
             source,
             output,
@@ -632,5 +688,5 @@ class DepthAccelBuildTensorrtEngine(io.ComfyNode):
             max_hw=(max_h, max_w),
             workspace_gb=workspace_gb,
         )
-        engine_model = load_tensorrt_model(str(output), device="cuda")
+        engine_model = load_tensorrt_model(str(output), device=_cuda_device_arg())
         return io.NodeOutput(engine_model)

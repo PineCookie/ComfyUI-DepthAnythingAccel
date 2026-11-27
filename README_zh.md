@@ -95,7 +95,7 @@ Small，体积小且允许商用；其他模型见「模型」一节。
 - **图片尺寸**：为避免显存耗尽，PyTorch 与 ONNX 节点会拒绝超过约 2.6 MP（FP32）或
   4.7 MP（FP16/BF16）的输入，请先缩小图片；TensorRT 则受引擎的 `Max H` / `Max W` 限制。
 - **尺寸取整**：宽高会向下取整到 14 的倍数（模型的 patch 大小），输出再缩放回原图尺寸。
-- **Batch**：ONNX Runtime 一次处理整个 batch；PyTorch 与 TensorRT 逐张处理。
+- **Batch**：所有后端均逐张处理 batch，以控制显存占用。
 - **精度**：PyTorch 加载器的 FP16/BF16 仅在 CUDA/ROCm 上生效，其他设备按 FP32 运行。
 
 ## 模型

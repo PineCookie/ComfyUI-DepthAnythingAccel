@@ -109,6 +109,32 @@ class NodeHelperTests(unittest.TestCase):
     def test_resolve_precision_passes_explicit_values_through(self):
         self.assertEqual(self.nodes._resolve_precision("bf16"), "bf16")
 
+    def test_cuda_device_arg_preserves_active_gpu_index(self):
+        with mock.patch("comfy.model_management.get_torch_device", return_value=torch.device("cuda", 1)):
+            self.assertEqual(self.nodes._cuda_device_arg(), "cuda:1")
+        with mock.patch("comfy.model_management.get_torch_device", return_value=torch.device("cpu")):
+            self.assertEqual(self.nodes._cuda_device_arg(), "cuda")
+
+    def test_free_cuda_vram_invokes_comfy_memory_management_on_cuda_only(self):
+        cuda_dev = torch.device("cuda", 1)
+        with (
+            mock.patch("comfy.model_management.get_torch_device", return_value=cuda_dev),
+            mock.patch("comfy.model_management.free_memory") as free_mock,
+            mock.patch("comfy.model_management.soft_empty_cache") as cache_mock,
+        ):
+            self.nodes._free_cuda_vram(1024)
+            free_mock.assert_called_once_with(1024, cuda_dev)
+            cache_mock.assert_called_once_with()
+
+        with (
+            mock.patch("comfy.model_management.get_torch_device", return_value=torch.device("cpu")),
+            mock.patch("comfy.model_management.free_memory") as free_mock,
+            mock.patch("comfy.model_management.soft_empty_cache") as cache_mock,
+        ):
+            self.nodes._free_cuda_vram(1024)
+            free_mock.assert_not_called()
+            cache_mock.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

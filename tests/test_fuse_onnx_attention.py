@@ -4,7 +4,7 @@ import numpy as np
 import onnx
 from onnx import helper, numpy_helper
 
-from tools.fuse_onnx_attention import validate_attention_graph
+from tools.fuse_onnx_attention import fuse_attention, validate_attention_graph
 
 
 def make_attention_graph(hidden_size: int = 4) -> onnx.ModelProto:
@@ -47,6 +47,42 @@ class AttentionGraphValidationTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "external consumers"):
             validate_attention_graph(model, hidden_size=4, num_heads=2, num_blocks=1)
+
+    def test_fuse_attention_mha_preserves_qkv_add_producer(self):
+        model = make_attention_graph(hidden_size=4)
+        fused_blocks = fuse_attention(
+            model, num_heads=2, hidden_size=4, operator="mha", num_blocks=1
+        )
+        self.assertEqual(fused_blocks, 1)
+
+        nodes_by_name = {node.name: node for node in model.graph.node}
+        self.assertIn("/blocks.0/attn/qkv/MatMul", nodes_by_name)
+        self.assertIn("/blocks.0/attn/qkv/Add", nodes_by_name)
+        self.assertIn("/blocks.0/attn/FusedAttention/Split", nodes_by_name)
+        self.assertIn("/blocks.0/attn/FusedAttention", nodes_by_name)
+
+        qkv_add = nodes_by_name["/blocks.0/attn/qkv/Add"]
+        split = nodes_by_name["/blocks.0/attn/FusedAttention/Split"]
+        mha = nodes_by_name["/blocks.0/attn/FusedAttention"]
+        proj = nodes_by_name["/blocks.0/attn/proj/MatMul"]
+        self.assertEqual(split.input[0], qkv_add.output[0])
+        self.assertEqual(list(mha.input[:3]), list(split.output))
+        self.assertEqual(proj.input[0], mha.output[0])
+
+    def test_fuse_attention_fused_qkv_rewires_projection(self):
+        model = make_attention_graph(hidden_size=4)
+        fused_blocks = fuse_attention(
+            model, num_heads=2, hidden_size=4, operator="attention", num_blocks=1
+        )
+        self.assertEqual(fused_blocks, 1)
+
+        nodes_by_name = {node.name: node for node in model.graph.node}
+        self.assertNotIn("/blocks.0/attn/qkv/MatMul", nodes_by_name)
+        self.assertNotIn("/blocks.0/attn/qkv/Add", nodes_by_name)
+        attn = nodes_by_name["/blocks.0/attn/FusedAttention"]
+        proj = nodes_by_name["/blocks.0/attn/proj/MatMul"]
+        self.assertEqual(list(attn.input), ["input", "qkv_weight", "qkv_bias"])
+        self.assertEqual(proj.input[0], attn.output[0])
 
 
 if __name__ == "__main__":

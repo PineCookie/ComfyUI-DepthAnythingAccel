@@ -190,7 +190,7 @@ def fuse_attention(
                     domain="com.microsoft",
                     num_heads=num_heads,
                 )
-                new_nodes.extend([split, fused])
+                new_nodes.extend([node, split, fused])
             else:
                 qkv_projection = qkv_projection_by_block.get(block)
                 if qkv_projection is None:
@@ -268,7 +268,7 @@ def fuse_attention_model(
 
     print(
         f"[DepthAnythingAccel] Fuse: validating {config['num_blocks']} attention "
-        f"blocks and rewriting ({encoder}, attention)...",
+        f"blocks and rewriting ({encoder}, {operator})...",
         flush=True,
     )
     before = operator_counts(model)
